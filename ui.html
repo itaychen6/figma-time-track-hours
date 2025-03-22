@@ -445,18 +445,27 @@
       console.error('Firebase error:', error);
       
       // Notify the plugin about the error
-      parent.postMessage({ pluginMessage: { 
-        type: 'firebase-error', 
-        error: error.message || 'Unknown Firebase error'
-      } }, '*');
+      parent.postMessage({ 
+        pluginMessage: { 
+          type: 'firebase-error', 
+          error: error.message || 'Unknown Firebase error'
+        } 
+      }, '*');
       
       // Show error in UI
       document.getElementById('firebase-status').textContent = 'Firebase Error: ' + (error.message || 'Unknown error');
       document.getElementById('firebase-status').style.color = 'red';
       
-      // If we're on the summary tab, load summary from local data
+      // If we're on the summary tab, use local data immediately
       if (document.getElementById('summary-tab').classList.contains('active')) {
-        loadSummaryFromLocal();
+        // First try to use any cached data
+        if (summaryData && Object.keys(summaryData).length > 0) {
+          console.log('Using cached summary data due to Firebase error');
+          updateSummaryDisplay(summaryData);
+        } else {
+          // Otherwise request local data
+          requestLocalSummaryData();
+        }
       }
     }
     
@@ -1519,25 +1528,34 @@
           if (content) {
             content.classList.add('active');
             
-            // If summary tab is selected, load summary data
+            // If summary tab is selected
             if (tabId === 'summary-tab') {
-              console.log('Summary tab selected, checking if data needs to be loaded');
-              
               // Show loading message
-              document.getElementById('summary-loading').textContent = 
-                'Generating summary from your tracked time...';
+              document.getElementById('summary-loading').style.display = 'block';
+              document.getElementById('summary-loading').innerText = 'Generating summary from your tracked time...';
               
-              // Wait a moment to ensure tab is visible
+              // If we already have summary data, use it immediately
+              if (summaryData && Object.keys(summaryData).length > 0) {
+                console.log('Using existing summary data immediately');
+                // Use a small timeout to ensure the tab is visible first
+                setTimeout(() => {
+                  updateSummaryDisplay(summaryData);
+                }, 10);
+              }
+              
+              // Request fresh data after a short delay
               setTimeout(() => {
-                // Request immediate summary generation
                 console.log('Requesting immediate summary generation');
-                parent.postMessage({ 
-                  pluginMessage: { 
-                    type: 'get-summary',
-                    immediate: true
-                  } 
-                }, '*');
+                parent.postMessage({ pluginMessage: { type: 'get-summary', immediate: true } }, '*');
               }, 100);
+              
+              // As a final fallback, try Firebase with a delay
+              if (firebaseInitialized && firebaseDb) {
+                setTimeout(() => {
+                  console.log('Requesting Firebase data as final option');
+                  loadSummaryFromFirebase(false);
+                }, 1500);
+              }
             }
           }
         });
@@ -1726,16 +1744,20 @@
       }
     }
 
-    // Load summary data from Firebase
+    // Load summary data from Firebase with better error handling and timeout
     function loadSummaryFromFirebase(retryWithLocal = true) {
       try {
         if (!firebaseInitialized || !firebaseDb || !userId) {
-          console.warn('Firebase not ready for loading summary. Will use local data.');
-          updateSummaryDisplay(summaryData || {});
+          console.warn('Firebase not ready for loading summary. Using local data.');
+          
+          // Show the current summary data if available
+          if (summaryData) {
+            updateSummaryDisplay(summaryData);
+          }
           
           if (retryWithLocal) {
             // Request local summary as fallback
-            parent.postMessage({ pluginMessage: { type: 'get-summary', immediate: true } }, '*');
+            requestLocalSummaryData();
           }
           return;
         }
@@ -1743,9 +1765,28 @@
         updateFirebaseStatus('Loading data from Firebase...');
         console.log('Loading summary data from Firebase for user', userId);
         
+        // Set a timeout for Firebase operations
+        const timeoutId = setTimeout(() => {
+          console.warn('Firebase data loading timeout, using local data');
+          updateFirebaseStatus('Firebase timeout, using local data', true);
+          
+          // Use stored summary data if available
+          if (summaryData) {
+            updateSummaryDisplay(summaryData);
+          }
+          
+          // Request fresh local data
+          if (retryWithLocal) {
+            requestLocalSummaryData();
+          }
+        }, 4000); // 4 second timeout
+        
         const timeDataRef = firebaseDb.ref('timeData/' + userId);
         timeDataRef.once('value')
           .then(snapshot => {
+            // Clear the timeout as we got a response
+            clearTimeout(timeoutId);
+            
             const data = snapshot.val();
             console.log('Firebase data loaded:', data);
             
@@ -1764,32 +1805,51 @@
               updateFirebaseStatus('Data loaded from Firebase');
             } else {
               console.log('No data found in Firebase, requesting from plugin');
-              updateSummaryDisplay({});
+              
+              // If we have stored summary data, show it immediately
+              if (summaryData) {
+                updateSummaryDisplay(summaryData);
+              } else {
+                updateSummaryDisplay({});
+              }
               
               if (retryWithLocal) {
                 // Request local summary as fallback
-                parent.postMessage({ pluginMessage: { type: 'get-summary', immediate: true } }, '*');
+                requestLocalSummaryData();
               }
               
-              updateFirebaseStatus('No data in Firebase, using local');
+              updateFirebaseStatus('No data in Firebase, using local', true);
             }
           })
           .catch(error => {
+            // Clear the timeout as we got a response (error)
+            clearTimeout(timeoutId);
+            
             console.error('Error loading data from Firebase:', error);
             updateFirebaseStatus('Firebase error: ' + error.message, true);
             
+            // If we have stored summary data, show it immediately
+            if (summaryData) {
+              updateSummaryDisplay(summaryData);
+            }
+            
             if (retryWithLocal) {
               // Request local summary as fallback
-              parent.postMessage({ pluginMessage: { type: 'get-summary', immediate: true } }, '*');
+              requestLocalSummaryData();
             }
           });
       } catch (error) {
         console.error('Error in loadSummaryFromFirebase:', error);
         updateFirebaseStatus('Firebase error: ' + error.message, true);
         
+        // If we have stored summary data, show it immediately
+        if (summaryData) {
+          updateSummaryDisplay(summaryData);
+        }
+        
         if (retryWithLocal) {
           // Request local summary as fallback
-          parent.postMessage({ pluginMessage: { type: 'get-summary', immediate: true } }, '*');
+          requestLocalSummaryData();
         }
       }
     }
@@ -1830,242 +1890,6 @@
       }
     }
 
-    // Update summary display
-    function updateSummaryDisplay(files) {
-      try {
-        // Hide loading message
-        document.getElementById('summary-loading').style.display = 'none';
-        
-        // Get the summary container
-        const summaryContainer = document.getElementById('summary-container');
-        summaryContainer.innerHTML = '';
-        
-        // Check if there's no data
-        if (!files || Object.keys(files).length === 0) {
-          summaryContainer.innerHTML = `
-            <div class="no-data">
-              <p>No time tracking data available.</p>
-              <button id="refresh-summary-btn" class="refresh-btn">Refresh Summary</button>
-            </div>
-          `;
-          
-          // Add event listener to the refresh button
-          const refreshBtn = document.getElementById('refresh-summary-btn');
-          if (refreshBtn) {
-            refreshBtn.addEventListener('click', refreshSummary);
-          }
-          
-          return;
-        }
-        
-        // Create summary header with refresh button
-        const summaryHeader = document.createElement('div');
-        summaryHeader.className = 'summary-header';
-        summaryHeader.innerHTML = `
-          <h3>Time Summary</h3>
-          <button id="refresh-summary-btn" class="refresh-btn">↻</button>
-        `;
-        summaryContainer.appendChild(summaryHeader);
-        
-        // Add event listener to the refresh button
-        const refreshBtn = document.getElementById('refresh-summary-btn');
-        if (refreshBtn) {
-          refreshBtn.addEventListener('click', refreshSummary);
-        }
-        
-        // Create section for file entries
-        const filesList = document.createElement('div');
-        filesList.className = 'summary-files-list';
-        
-        // Process each file's data
-        let totalTimeMs = 0;
-        Object.keys(files).forEach(fileId => {
-          const fileData = files[fileId];
-          const fileName = fileData.name || 'Unnamed File';
-          
-          // Calculate total time for this file (convert seconds to ms if needed)
-          let fileTimeMs = 0;
-          
-          if (fileData.pages) {
-            Object.keys(fileData.pages).forEach(pageId => {
-              const pageData = fileData.pages[pageId];
-              if (pageData.totalTime) {
-                fileTimeMs += pageData.totalTime;
-              }
-              
-              if (pageData.entries) {
-                Object.values(pageData.entries).forEach((entry) => {
-                  if (entry.duration) {
-                    fileTimeMs += entry.duration;
-                  }
-                });
-              }
-            });
-          }
-          
-          // Don't show entries with no time
-          if (fileTimeMs === 0) {
-            return;
-          }
-          
-          totalTimeMs += fileTimeMs;
-          
-          // Format time (hours, minutes, seconds)
-          const formattedTime = formatTime(fileTimeMs);
-          
-          // Create file entry
-          const fileEntry = document.createElement('div');
-          fileEntry.className = 'summary-file-entry';
-          fileEntry.innerHTML = `
-            <span class="file-name">${fileName}</span>
-            <span class="file-time">${formattedTime}</span>
-          `;
-          filesList.appendChild(fileEntry);
-        });
-        
-        // Add files list to summary container
-        summaryContainer.appendChild(filesList);
-        
-        // Add total time
-        const totalTimeElement = document.createElement('div');
-        totalTimeElement.className = 'summary-total';
-        totalTimeElement.innerHTML = `
-          <span class="total-label">Total Time:</span>
-          <span class="total-time">${formatTime(totalTimeMs)}</span>
-        `;
-        summaryContainer.appendChild(totalTimeElement);
-        
-        // Store the summary data locally for persistence
-        summaryData = files;
-        
-      } catch (error) {
-        console.error('Error updating summary display:', error);
-        
-        // Show error message
-        document.getElementById('summary-loading').style.display = 'none';
-        const summaryContainer = document.getElementById('summary-container');
-        summaryContainer.innerHTML = `
-          <div class="error-message">
-            <p>Error displaying summary: ${error.message}</p>
-            <button id="refresh-summary-btn" class="refresh-btn">Try Again</button>
-          </div>
-        `;
-        
-        // Add event listener to the retry button
-        const refreshBtn = document.getElementById('refresh-summary-btn');
-        if (refreshBtn) {
-          refreshBtn.addEventListener('click', refreshSummary);
-        }
-      }
-    }
-
-    // Set up event listeners
-    document.addEventListener('DOMContentLoaded', function() {
-      // Initialize the UI
-      initializeUI();
-      
-      // Fix any incorrect message formats
-      setTimeout(fixIncorrectMessageFormats, 500);
-      
-      // Handle messages from the plugin
-      window.onmessage = event => {
-        const message = event.data.pluginMessage;
-        if (!message) return;
-        
-        console.log('Message from plugin:', message.type);
-        
-        // Handle various message types
-        if (message.type === 'firebase-config') {
-          // Set firebase config from plugin
-          firebaseConfig = message.config;
-          userId = message.userId;
-          
-          // Initialize Firebase as soon as we get the config
-          loadFirebaseConfig(firebaseConfig);
-        }
-        
-        else if (message.type === 'update-files') {
-          // Update the files list in the UI
-          updateFilesListUI(message.files);
-        }
-        
-        else if (message.type === 'tracking-status') {
-          // Update the tracking status in the UI
-          setTrackingStatus(message.isTracking, message.fileName, message.pageName);
-        }
-        
-        else if (message.type === 'update-summary') {
-          // Update the summary display with the new data
-          console.log('Received summary update from plugin', message.immediate);
-          
-          // Store for persistence
-          summaryData = message.files;
-          
-          // Update display
-          updateSummaryDisplay(message.files);
-        }
-        
-        else if (message.type === 'request-firebase-data') {
-          // Load data from Firebase
-          loadSummaryFromFirebase();
-        }
-        
-        else if (message.type === 'save-to-firebase') {
-          // Save data to Firebase
-          saveDataToFirebase(message.files, message.userId, message.timestamp);
-        }
-        
-        else if (message.type === 'background-tracking-state') {
-          // Update the background tracking toggle
-          document.getElementById('background-tracking').checked = message.enabled;
-        }
-      };
-      
-      // Handle tabs
-      const tabButtons = document.querySelectorAll('.tab-button');
-      tabButtons.forEach(button => {
-        button.addEventListener('click', function(e) {
-          const tabId = this.getAttribute('data-tab');
-          
-          // Remove active class from all buttons and contents
-          document.querySelectorAll('.tab-button').forEach(btn => {
-            btn.classList.remove('active');
-          });
-          document.querySelectorAll('.tab-content').forEach(content => {
-            content.classList.remove('active');
-          });
-          
-          // Add active class to clicked button and corresponding content
-          this.classList.add('active');
-          const tabContent = document.getElementById(tabId);
-          if (tabContent) {
-            tabContent.classList.add('active');
-          }
-          
-          // If summary tab selected
-          if (tabId === 'summary-tab') {
-            // Show loading message
-            document.getElementById('summary-loading').style.display = 'block';
-            document.getElementById('summary-loading').innerText = 'Generating summary from your tracked time...';
-            
-            // If we already have summary data, use it immediately
-            if (summaryData) {
-              console.log('Using existing summary data');
-              updateSummaryDisplay(summaryData);
-            }
-            
-            // Request fresh data after a short delay
-            setTimeout(() => {
-              console.log('Requesting immediate summary generation');
-              parent.postMessage({ pluginMessage: { type: 'get-summary', immediate: true } }, '*');
-            }, 100);
-          }
-        });
-      });
-      
-      // ... existing code ...
-    });
-
     // Update Firebase status display
     function updateFirebaseStatus(message, isError = false) {
       const statusElement = document.getElementById('firebase-status');
@@ -2079,111 +1903,6 @@
             statusElement.textContent = '';
           }, 5000);
         }
-      }
-    }
-
-    // Refresh summary data
-    function refreshSummary() {
-      console.log('Manual refresh of summary requested');
-      
-      // Show loading message
-      const loadingElement = document.getElementById('summary-loading');
-      if (loadingElement) {
-        loadingElement.style.display = 'block';
-        loadingElement.textContent = 'Refreshing summary data...';
-      }
-      
-      // First try Firebase if initialized
-      if (firebaseInitialized && firebaseDb) {
-        try {
-          loadSummaryFromFirebase(true);
-        } catch (error) {
-          console.error('Error refreshing from Firebase:', error);
-          // Fall back to local data
-          requestLocalSummaryData();
-        }
-      } else {
-        // If Firebase not initialized, use local data
-        requestLocalSummaryData();
-      }
-    }
-
-    // Fix all the incorrect message formats in the file
-    function fixIncorrectMessageFormats() {
-      // Find and add event listeners to potential refresh buttons
-      const refreshButtons = document.querySelectorAll('.refresh-btn, .summary-refresh-button, .summary-retry-button');
-      refreshButtons.forEach(button => {
-        // Remove any existing listeners
-        const newButton = button.cloneNode(true);
-        button.parentNode.replaceChild(newButton, button);
-        
-        // Add proper event listener
-        newButton.addEventListener('click', refreshSummary);
-      });
-    }
-
-    // Request local summary data from the plugin
-    function requestLocalSummaryData() {
-      console.log('Requesting local summary data');
-      parent.postMessage({ 
-        pluginMessage: { 
-          type: 'get-summary', 
-          immediate: true 
-        }
-      }, '*');
-    }
-
-    // Initialize Firebase with retry mechanism
-    function loadFirebaseConfig(config) {
-      try {
-        console.log('Initializing Firebase with provided config...');
-        if (!firebase) {
-          console.error('Firebase SDK not loaded!');
-          updateFirebaseStatus('Firebase SDK not loaded', true);
-          return;
-        }
-        
-        firebaseConfig = config;
-        if (!firebase.apps.length) {
-          firebaseApp = firebase.initializeApp(firebaseConfig);
-        } else {
-          firebaseApp = firebase.app();
-        }
-        
-        // Add connection state detection
-        const connectedRef = firebase.database().ref('.info/connected');
-        connectedRef.on('value', (snap) => {
-          if (snap.val() === true) {
-            console.log('Connected to Firebase');
-            updateFirebaseStatus('Connected to Firebase');
-          } else {
-            console.log('Not connected to Firebase');
-            updateFirebaseStatus('Firebase connection lost', true);
-            
-            // If we're on summary tab, use local data as fallback
-            if (document.getElementById('summary-tab').classList.contains('active')) {
-              requestLocalSummaryData();
-            }
-          }
-        });
-        
-        firebaseDb = firebase.database();
-        firebaseInitialized = true;
-        updateFirebaseStatus('Firebase connected');
-        
-        // Tell the plugin Firebase is ready
-        parent.postMessage({ pluginMessage: { type: 'firebase-init-complete' } }, '*');
-        
-        // Immediately load summary data if available
-        loadSummaryFromFirebase();
-        
-        console.log('Firebase initialized successfully');
-      } catch (error) {
-        console.error('Firebase initialization error:', error);
-        updateFirebaseStatus('Firebase error: ' + error.message, true);
-        
-        // Fall back to local data for summary
-        requestLocalSummaryData();
       }
     }
   </script>
