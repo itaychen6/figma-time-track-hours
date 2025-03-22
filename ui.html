@@ -978,6 +978,9 @@
       try {
         console.log('Updating summary display with data:', filesData);
         
+        // Save the data to localStorage for persistence
+        saveSummaryToLocalStorage(filesData);
+        
         // Get the summary container
         const summaryContainer = document.getElementById('summary-container');
         
@@ -1126,7 +1129,15 @@
         retryButton.textContent = 'Retry';
         retryButton.className = 'summary-retry-button';
         retryButton.onclick = () => {
-          parent.postMessage({ pluginMessage: { type: 'get-summary', immediate: true } }, '*');
+          // Try to load from localStorage first
+          const savedData = loadSummaryFromLocalStorage();
+          if (savedData && Object.keys(savedData).length > 0) {
+            console.log('Using saved data from localStorage after error');
+            updateSummaryDisplay(savedData);
+          } else {
+            // If no localStorage data, request from plugin
+            parent.postMessage({ pluginMessage: { type: 'get-summary', immediate: true } }, '*');
+          }
         };
         summaryContainer.appendChild(retryButton);
       }
@@ -1373,6 +1384,14 @@
       if (summaryContainer) {
         summaryContainer.innerHTML = '<div class="loading-summary">Loading summary data...</div>';
         
+        // Try to load summary data from localStorage first
+        const savedSummaryData = loadSummaryFromLocalStorage();
+        if (savedSummaryData && Object.keys(savedSummaryData).length > 0) {
+          console.log('Found saved summary data in localStorage, displaying immediately');
+          summaryData = savedSummaryData;
+          updateSummaryDisplay(savedSummaryData);
+        }
+        
         // Request immediate summary data (will fallback to local if needed)
         setTimeout(() => {
           requestLocalSummaryData();
@@ -1380,6 +1399,59 @@
       }
     }
     
+    // Save summary data to localStorage
+    function saveSummaryToLocalStorage(data) {
+      try {
+        if (!data || Object.keys(data).length === 0) {
+          console.log('No summary data to save to localStorage');
+          return;
+        }
+        
+        console.log('Saving summary data to localStorage');
+        localStorage.setItem('summaryData', JSON.stringify(data));
+        localStorage.setItem('summaryLastSaved', Date.now().toString());
+        console.log('Summary data saved to localStorage successfully');
+      } catch (error) {
+        console.error('Error saving summary data to localStorage:', error);
+      }
+    }
+    
+    // Load summary data from localStorage
+    function loadSummaryFromLocalStorage() {
+      try {
+        const savedData = localStorage.getItem('summaryData');
+        if (!savedData) {
+          console.log('No summary data found in localStorage');
+          return null;
+        }
+        
+        const lastSaved = localStorage.getItem('summaryLastSaved');
+        const parsedData = JSON.parse(savedData);
+        
+        console.log('Loaded summary data from localStorage, last saved:', 
+                   lastSaved ? new Date(parseInt(lastSaved)).toLocaleString() : 'unknown');
+        
+        return parsedData;
+      } catch (error) {
+        console.error('Error loading summary data from localStorage:', error);
+        return null;
+      }
+    }
+
+    // Add function to request local summary data from the plugin
+    function requestLocalSummaryData() {
+      console.log('Requesting summary data from plugin');
+      document.getElementById('summary-loading').textContent = 'Loading summary data...';
+      
+      // Request summary data from plugin
+      parent.postMessage({ 
+        pluginMessage: { 
+          type: 'get-summary',
+          immediate: true
+        }
+      }, '*');
+    }
+
     // Run initialization when page loads
     window.onload = () => {
       // Initialize the UI
@@ -1659,8 +1731,17 @@
               document.getElementById('summary-loading').style.display = 'block';
               document.getElementById('summary-loading').innerText = 'Generating summary from your tracked time...';
               
-              // If we already have summary data, use it immediately
-              if (summaryData && Object.keys(summaryData).length > 0) {
+              // First, try to use localStorage data if available for immediate display
+              const savedData = loadSummaryFromLocalStorage();
+              if (savedData && Object.keys(savedData).length > 0) {
+                console.log('Using saved localStorage data for immediate display');
+                // Use a small timeout to ensure the tab is visible first
+                setTimeout(() => {
+                  updateSummaryDisplay(savedData);
+                }, 10);
+              }
+              // Otherwise, if we already have summary data, use it immediately
+              else if (summaryData && Object.keys(summaryData).length > 0) {
                 console.log('Using existing summary data immediately');
                 // Use a small timeout to ensure the tab is visible first
                 setTimeout(() => {
@@ -1875,8 +1956,13 @@
         if (!firebaseInitialized || !firebaseDb || !userId) {
           console.warn('Firebase not ready for loading summary. Using local data.');
           
-          // Show the current summary data if available
-          if (summaryData) {
+          // First try to show saved data from localStorage
+          const savedData = loadSummaryFromLocalStorage();
+          if (savedData && Object.keys(savedData).length > 0) {
+            console.log('Using saved data from localStorage due to Firebase not being ready');
+            updateSummaryDisplay(savedData);
+          } else if (summaryData) {
+            // Otherwise, show the current summary data if available
             updateSummaryDisplay(summaryData);
           }
           
@@ -1953,8 +2039,13 @@
             console.error('Error loading data from Firebase:', error);
             updateFirebaseStatus('Firebase error: ' + error.message, true);
             
-            // If we have stored summary data, show it immediately
-            if (summaryData) {
+            // Try to show saved data from localStorage
+            const savedData = loadSummaryFromLocalStorage();
+            if (savedData && Object.keys(savedData).length > 0) {
+              console.log('Using saved data from localStorage due to Firebase error');
+              updateSummaryDisplay(savedData);
+            } else if (summaryData) {
+              // If we have stored summary data, show it immediately
               updateSummaryDisplay(summaryData);
             }
             
@@ -1967,8 +2058,13 @@
         console.error('Error in loadSummaryFromFirebase:', error);
         updateFirebaseStatus('Firebase error: ' + error.message, true);
         
-        // If we have stored summary data, show it immediately
-        if (summaryData) {
+        // Try to show saved data from localStorage
+        const savedData = loadSummaryFromLocalStorage();
+        if (savedData && Object.keys(savedData).length > 0) {
+          console.log('Using saved data from localStorage due to Firebase error');
+          updateSummaryDisplay(savedData);
+        } else if (summaryData) {
+          // If we have stored summary data, show it immediately
           updateSummaryDisplay(summaryData);
         }
         
