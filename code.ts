@@ -98,16 +98,25 @@ figma.loadAllPagesAsync().then(() => {
   
   // Register event handlers after pages are loaded
   figma.on('selectionchange', () => {
+    console.log('Selection change event triggered');
     handleActivity();
   });
   
   figma.on('documentchange', () => {
+    console.log('Document change event triggered');
     handleActivity();
   });
   
   console.log('All pages loaded, event handlers registered');
+  
+  // Initialize the plugin now that pages are loaded
+  initializePlugin();
 }).catch(error => {
   console.error('Error loading all pages:', error);
+  
+  // Still initialize the plugin, just without event handlers
+  console.log('Initializing plugin without page event handlers');
+  initializePlugin();
 });
 
 // Focus the plugin window
@@ -210,6 +219,14 @@ figma.ui.onmessage = async (message: any) => {
 
 // Start the plugin when UI sends ready message
 function initializePlugin() {
+  console.log('Initializing plugin with debugging...', {
+    activeFileId,
+    activePage,
+    isTracking,
+    backgroundTracking,
+    pagesLoaded
+  });
+  
   // Make sure we register figma events when pages are loaded
   if (!pagesLoaded) {
     console.log('Pages not yet loaded, loading now...');
@@ -218,10 +235,12 @@ function initializePlugin() {
       console.log('Pages loaded, registering event handlers');
       // Register event handlers
       figma.on('selectionchange', () => {
+        console.log('Selection change event triggered');
         handleActivity();
       });
       
       figma.on('documentchange', () => {
+        console.log('Document change event triggered');
         handleActivity();
       });
     }).catch(error => {
@@ -233,15 +252,28 @@ function initializePlugin() {
   sendFirebaseConfig();
   
   // Set up file change checking
+  if (fileCheckInterval) {
+    clearInterval(fileCheckInterval);
+  }
   fileCheckInterval = setInterval(checkCurrentFile, FILE_CHECK_INTERVAL);
+  console.log('File check interval set up:', FILE_CHECK_INTERVAL, 'ms');
   
   // Set up activity checking
+  if (activityCheckInterval) {
+    clearInterval(activityCheckInterval);
+  }
   activityCheckInterval = setInterval(checkActivity, ACTIVITY_CHECK_INTERVAL);
   
   // Set up periodic saving
+  if (saveInterval) {
+    clearInterval(saveInterval);
+  }
   saveInterval = setInterval(saveData, SAVE_INTERVAL);
   
   // Set up heartbeat to check if plugin is still active
+  if (heartbeatInterval) {
+    clearInterval(heartbeatInterval);
+  }
   heartbeatInterval = setInterval(heartbeat, HEARTBEAT_INTERVAL);
   
   // Initial loading of saved data
@@ -250,6 +282,7 @@ function initializePlugin() {
   // Check current file immediately but with a short delay
   // to ensure Figma API is ready
   setTimeout(() => {
+    console.log('Calling initial checkCurrentFile...');
     checkCurrentFile();
   }, 500);
   
@@ -288,10 +321,36 @@ function sendFirebaseConfig() {
 
 // Handle user activity
 function handleActivity() {
+  console.log('Handle activity called, checking current file info...', {
+    currentPage: figma.currentPage?.name,
+    currentFile: figma.currentPage?.parent ? (figma.currentPage.parent as any).name : 'unknown'
+  });
+  
   lastActivityTime = Date.now();
   
-  if (!isTracking) {
-    startTracking();
+  try {
+    // Only start tracking if we have a valid current page
+    if (figma.currentPage) {
+      if (!isTracking) {
+        // Make sure activeFileId and activePage are set
+        if (!activeFileId || !activePage) {
+          console.log('Setting active file and page before starting tracking');
+          activeFileId = figma.currentPage.parent.id;
+          activePage = figma.currentPage.id;
+          activeFileName = (figma.currentPage.parent as any).name || 'Untitled';
+          activePageName = figma.currentPage.name || 'Untitled';
+        }
+        
+        console.log('Starting tracking from handleActivity');
+        startTracking();
+      } else {
+        console.log('Already tracking, no need to start');
+      }
+    } else {
+      console.warn('Cannot handle activity: no current page available');
+    }
+  } catch (error) {
+    console.error('Error in handleActivity:', error);
   }
 }
 
@@ -433,9 +492,24 @@ function checkCurrentFile() {
     const currentFileName = (figma.currentPage.parent as any).name;
     const currentPageName = figma.currentPage.name;
     
+    console.log('Checking current file:', {
+      currentFileId,
+      currentPageId,
+      currentFileName,
+      currentPageName,
+      activeFileId,
+      activePage,
+      activeFileName,
+      activePageName,
+      isTracking
+    });
+    
     // Check for file or page change
     if (currentFileId !== activeFileId || currentPageId !== activePage) {
+      console.log('File or page has changed, handling change');
       handleFileChange(currentFileId, currentPageId, currentFileName, currentPageName);
+    } else {
+      console.log('Same file and page, no change detected');
     }
   } catch (error) {
     console.error('Error checking current file:', error);
