@@ -1417,7 +1417,7 @@
       // Implementation of updateFilesList function
     }
 
-    // Initialization function for the UI
+    // Initialization function for the UI (keep this minimal and focused)
     function initializeUI() {
       console.log('Initializing UI');
       
@@ -1441,62 +1441,14 @@
           if (savedTimestamp) {
             lastSavedTimestamp = parseInt(savedTimestamp);
           }
-          
-          // If summary tab is initially active, display the data
-          if (document.getElementById('summary-tab').classList.contains('active')) {
-            updateSummaryDisplay(summaryData);
-          }
         } else {
           console.log('No saved summary found in localStorage');
         }
       } catch (error) {
         console.error('Error restoring from localStorage:', error);
       }
-      
-      // Set up tab buttons
-      const tabButtons = document.querySelectorAll('.tab-button');
-      tabButtons.forEach(button => {
-        button.addEventListener('click', () => {
-          const tabId = button.getAttribute('data-tab');
-          
-          // Remove active class from all buttons and contents
-          document.querySelectorAll('.tab-button').forEach(btn => btn.classList.remove('active'));
-          document.querySelectorAll('.tab-content').forEach(content => {
-            if (content) content.classList.remove('active');
-          });
-          
-          // Add active class to clicked button and corresponding content
-          button.classList.add('active');
-          const content = document.getElementById(tabId);
-          if (content) {
-            content.classList.add('active');
-            
-            // If summary tab activated, handle it specially
-            if (tabId === 'summary-tab') {
-              // Show loading message
-              document.getElementById('summary-loading').textContent = 'Loading summary...';
-              
-              // Use stored data immediately if available
-              if (summaryData) {
-                console.log('Displaying stored summary data');
-                updateSummaryDisplay(summaryData);
-              }
-              
-              // Request fresh data
-              console.log('Requesting fresh summary data');
-              requestSummaryRefresh();
-            }
-          }
-        });
-      });
-      
-      // Set up refresh button in summary tab
-      const refreshButton = document.getElementById('refresh-summary');
-      if (refreshButton) {
-        refreshButton.addEventListener('click', requestSummaryRefresh);
-      }
     }
-    
+
     // Run initialization when page loads
     window.onload = function() {
       console.log('Page loaded - initializing UI');
@@ -1511,6 +1463,20 @@
       
       // Notify plugin that UI is loaded
       parent.postMessage({ pluginMessage: { type: 'ui-loaded' } }, '*');
+      
+      // Make sure the default tab is activated
+      const defaultTab = document.querySelector('.tab-button.active');
+      if (defaultTab) {
+        console.log('Setting initial active tab:', defaultTab.getAttribute('data-tab'));
+        defaultTab.click(); // Trigger the click event to properly initialize the tab
+      } else {
+        // If no tab is active by default, activate the first one
+        const firstTab = document.querySelector('.tab-button');
+        if (firstTab) {
+          console.log('No active tab found, activating first tab:', firstTab.getAttribute('data-tab'));
+          firstTab.click();
+        }
+      }
     };
 
     // Handle visibility changes
