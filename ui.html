@@ -332,6 +332,50 @@
       font-size: 12px;
       cursor: pointer;
     }
+    
+    .status-indicator {
+      width: 12px;
+      height: 12px;
+      border-radius: 50%;
+      display: inline-block;
+      margin-left: 8px;
+    }
+    
+    .status-indicator.good {
+      background-color: #34c759;
+    }
+    
+    .status-indicator.warning {
+      background-color: #ffcc00;
+    }
+    
+    .status-indicator.error {
+      background-color: #ff3b30;
+    }
+    
+    .storage-status-container {
+      margin-top: 24px;
+      padding-top: 16px;
+      border-top: 1px solid #eee;
+    }
+    
+    #storage-info {
+      margin-top: 8px;
+      margin-bottom: 16px;
+      font-size: 12px;
+      color: #666;
+    }
+    
+    #storage-actions {
+      margin-top: 12px;
+    }
+    
+    .danger-button {
+      background-color: #ff3b30;
+      color: white;
+      font-size: 12px;
+      padding: 6px 12px;
+    }
   </style>
 </head>
 <body>
@@ -403,6 +447,19 @@
         </div>
         
         <div id="firebase-status"></div>
+        
+        <!-- Storage Status Section -->
+        <div class="setting-item storage-status-container">
+          <div class="setting-label">Local Storage Status</div>
+          <div id="storage-status-indicator" class="status-indicator"></div>
+        </div>
+        
+        <div id="storage-info">
+          <div id="storage-usage"></div>
+          <div id="storage-actions">
+            <button id="clear-storage" class="danger-button">Clear Local Storage</button>
+          </div>
+        </div>
       </div>
     </div>
   </div>
@@ -1620,6 +1677,9 @@
       } catch (error) {
         console.error('Error restoring from localStorage:', error);
       }
+      
+      // Check storage status
+      checkStorageStatus();
     }
 
     // Run initialization when page loads
@@ -1724,31 +1784,34 @@
         // Try to reduce data size before saving
         const compressedData = compressDataForStorage(data);
         
-        // Save to localStorage
+        // First try normal storage
         try {
-          console.log('Saving summary data to localStorage,', 
-                    Object.keys(compressedData).length, 'files');
-          localStorage.setItem('figmaTimeTrackSummary', JSON.stringify(compressedData));
-          const timestamp = Date.now();
-          localStorage.setItem('figmaTimeTrackSummaryTimestamp', timestamp.toString());
-          console.log('Summary data saved successfully at', new Date(timestamp).toLocaleString());
-          return true;
+          const jsonString = JSON.stringify(compressedData);
+          
+          // If the data is small enough, store it normally
+          if (jsonString.length < 250000) {
+            console.log(`Saving summary data to localStorage (${jsonString.length} chars, ${Object.keys(compressedData).length} files)`);
+            localStorage.setItem('figmaTimeTrackSummary', jsonString);
+            localStorage.setItem('figmaTimeTrackSummaryTimestamp', Date.now().toString());
+            
+            // Clear any chunked data since we're storing in one piece
+            clearChunkedData();
+            
+            console.log('Summary data saved successfully');
+            return true;
+          } else {
+            // Data is too large, use chunking
+            console.log(`Data too large for single localStorage item (${jsonString.length} chars), using chunks`);
+            return saveDataInChunks(compressedData);
+          }
         } catch (storageError) {
           // Check if it's a quota error
-          if (storageError.name === 'QuotaExceededError' || 
-              storageError.name === 'NS_ERROR_DOM_QUOTA_REACHED') {
-            console.warn('localStorage quota exceeded. Trying further data reduction.');
-            // Try with more aggressive compression
-            try {
-              const minimalData = compressDataForStorage(data, true);
-              localStorage.setItem('figmaTimeTrackSummary', JSON.stringify(minimalData));
-              localStorage.setItem('figmaTimeTrackSummaryTimestamp', Date.now().toString());
-              console.log('Saved minimal summary data with', Object.keys(minimalData).length, 'files');
-              return true;
-            } catch (fallbackError) {
-              console.error('Failed to save even minimal data:', fallbackError);
-              return false;
-            }
+          if (isQuotaError(storageError)) {
+            console.warn('localStorage quota exceeded, trying chunking approach');
+            
+            // Try chunking with more aggressive compression 
+            const minimalData = compressDataForStorage(data, true);
+            return saveDataInChunks(minimalData); 
           } else {
             console.error('Error saving to localStorage:', storageError);
             return false;
@@ -1757,6 +1820,110 @@
       } catch (error) {
         console.error('Unexpected error in saveSummaryToLocalStorage:', error);
         return false;
+      }
+    }
+    
+    // Check if an error is a quota error
+    function isQuotaError(error) {
+      return (
+        error.name === 'QuotaExceededError' || 
+        error.name === 'NS_ERROR_DOM_QUOTA_REACHED' ||
+        // Safari private mode has a different error
+        error.code === 22 ||
+        error.code === 1014 ||
+        // Check message for other browsers
+        error.message && (
+          error.message.includes('quota') || 
+          error.message.includes('storage') || 
+          error.message.includes('limit')
+        )
+      );
+    }
+    
+    // Save data in chunks to work around localStorage limits
+    function saveDataInChunks(data) {
+      try {
+        // Clear any existing chunks
+        clearChunkedData();
+        
+        // Serialize the data
+        const jsonString = JSON.stringify(data);
+        
+        // Determine chunk size (50KB per chunk is safe)
+        const chunkSize = 50000;
+        const chunks = Math.ceil(jsonString.length / chunkSize);
+        
+        console.log(`Splitting data into ${chunks} chunks of ${chunkSize} chars each`);
+        
+        // Store metadata first
+        localStorage.setItem('figmaTimeTrackSummary_meta', JSON.stringify({
+          chunks: chunks,
+          totalLength: jsonString.length,
+          timestamp: Date.now()
+        }));
+        
+        // Store each chunk
+        for (let i = 0; i < chunks; i++) {
+          const start = i * chunkSize;
+          const end = Math.min(start + chunkSize, jsonString.length);
+          const chunk = jsonString.substring(start, end);
+          
+          localStorage.setItem(`figmaTimeTrackSummary_chunk_${i}`, chunk);
+          console.log(`Saved chunk ${i+1}/${chunks}, length: ${chunk.length}`);
+        }
+        
+        localStorage.setItem('figmaTimeTrackSummaryTimestamp', Date.now().toString());
+        console.log(`Successfully saved data in ${chunks} chunks`);
+        return true;
+      } catch (error) {
+        console.error('Error saving data in chunks:', error);
+        
+        // Try with even more minimal data - just keep top 3 files as last resort
+        try {
+          const emergencyData = {};
+          const topFiles = Object.entries(data)
+            .sort((a, b) => getFileTime(b[1]) - getFileTime(a[1]))
+            .slice(0, 3);
+          
+          topFiles.forEach(([fileId, fileData]) => {
+            emergencyData[fileId] = {
+              id: fileId,
+              name: fileData.name,
+              totalSeconds: getFileTime(fileData)
+            };
+          });
+          
+          console.log('Trying emergency storage with just top 3 files');
+          localStorage.setItem('figmaTimeTrackSummary_emergency', JSON.stringify(emergencyData));
+          localStorage.setItem('figmaTimeTrackSummaryTimestamp', Date.now().toString());
+          return true;
+        } catch (emergencyError) {
+          console.error('Even emergency storage failed:', emergencyError);
+          return false;
+        }
+      }
+    }
+    
+    // Clear chunked data from localStorage
+    function clearChunkedData() {
+      try {
+        // Get metadata if it exists
+        const metaString = localStorage.getItem('figmaTimeTrackSummary_meta');
+        if (metaString) {
+          const meta = JSON.parse(metaString);
+          const chunks = meta.chunks || 0;
+          
+          // Remove each chunk
+          for (let i = 0; i < chunks; i++) {
+            localStorage.removeItem(`figmaTimeTrackSummary_chunk_${i}`);
+          }
+          
+          // Remove metadata
+          localStorage.removeItem('figmaTimeTrackSummary_meta');
+          console.log(`Cleared ${chunks} data chunks from localStorage`);
+        }
+      } catch (error) {
+        console.error('Error clearing chunked data:', error);
       }
     }
     
@@ -1819,8 +1986,26 @@
     function loadSummaryFromLocalStorage() {
       try {
         console.log('Attempting to load summary data from localStorage');
-        const savedData = localStorage.getItem('figmaTimeTrackSummary');
         
+        // First check if we have chunked data
+        const metaString = localStorage.getItem('figmaTimeTrackSummary_meta');
+        if (metaString) {
+          return loadChunkedData();
+        }
+        
+        // Check for emergency data if no chunks
+        const emergencyData = localStorage.getItem('figmaTimeTrackSummary_emergency');
+        if (emergencyData) {
+          console.log('Loading emergency data from localStorage');
+          try {
+            return JSON.parse(emergencyData);
+          } catch (parseError) {
+            console.error('Error parsing emergency data:', parseError);
+          }
+        }
+        
+        // Try normal storage if no chunks or emergency data
+        const savedData = localStorage.getItem('figmaTimeTrackSummary');
         if (!savedData) {
           console.log('No summary data found in localStorage');
           return null;
@@ -1841,6 +2026,76 @@
         }
       } catch (error) {
         console.error('Error accessing localStorage:', error);
+        return null;
+      }
+    }
+    
+    // Load data that was saved in chunks
+    function loadChunkedData() {
+      try {
+        console.log('Loading chunked data from localStorage');
+        
+        // Get metadata
+        const metaString = localStorage.getItem('figmaTimeTrackSummary_meta');
+        if (!metaString) {
+          console.warn('No chunk metadata found in localStorage');
+          return null;
+        }
+        
+        const meta = JSON.parse(metaString);
+        const chunks = meta.chunks || 0;
+        
+        if (chunks <= 0) {
+          console.warn('Invalid chunk count in metadata');
+          return null;
+        }
+        
+        // Reconstruct the data from chunks
+        let jsonString = '';
+        let missingChunks = 0;
+        
+        for (let i = 0; i < chunks; i++) {
+          const chunk = localStorage.getItem(`figmaTimeTrackSummary_chunk_${i}`);
+          if (chunk) {
+            jsonString += chunk;
+          } else {
+            console.warn(`Missing chunk ${i} when loading data`);
+            missingChunks++;
+          }
+        }
+        
+        if (missingChunks > 0) {
+          console.warn(`${missingChunks} chunks were missing out of ${chunks} total chunks`);
+          if (missingChunks === chunks) {
+            console.error('All chunks are missing, cannot load data');
+            return null;
+          }
+        }
+        
+        // Verify the length
+        if (jsonString.length !== meta.totalLength) {
+          console.warn(`Reconstructed data length (${jsonString.length}) doesn't match expected length (${meta.totalLength})`);
+        }
+        
+        // Parse the reconstructed string
+        const parsedData = JSON.parse(jsonString);
+        console.log(`Successfully loaded data from ${chunks} chunks`, 
+                    Object.keys(parsedData).length, 'files');
+        return parsedData;
+      } catch (error) {
+        console.error('Error loading chunked data:', error);
+        
+        // Try emergency data as backup
+        try {
+          const emergencyData = localStorage.getItem('figmaTimeTrackSummary_emergency');
+          if (emergencyData) {
+            console.log('Falling back to emergency data');
+            return JSON.parse(emergencyData);
+          }
+        } catch (emergencyError) {
+          console.error('Error loading emergency data:', emergencyError);
+        }
+        
         return null;
       }
     }
@@ -2184,6 +2439,127 @@
             localStorage.setItem('storageWarningShown', 'true');
           });
         }
+      }
+    }
+
+    // Check localStorage status and update UI
+    function checkStorageStatus() {
+      try {
+        // Display container
+        document.getElementById('storage-status-indicator').className = 'status-indicator';
+        
+        // Test localStorage availability
+        const testKey = 'figmaTimeTrack_storageTest';
+        
+        try {
+          localStorage.setItem(testKey, '1');
+          localStorage.removeItem(testKey);
+          
+          // Check how much is used
+          let totalSize = 0;
+          let trackerSize = 0;
+          
+          // Estimate current usage
+          for (let i = 0; i < localStorage.length; i++) {
+            const key = localStorage.key(i);
+            const value = localStorage.getItem(key);
+            const size = (key.length + value.length) * 2; // Unicode is 2 bytes per char
+            
+            totalSize += size;
+            
+            if (key.startsWith('figmaTimeTrack')) {
+              trackerSize += size;
+            }
+          }
+          
+          // Check how much is used by our app
+          const usagePercent = Math.min(100, Math.round((trackerSize / 5000000) * 100)); // Assumes 5MB limit
+          
+          // Update the indicator
+          const statusIndicator = document.getElementById('storage-status-indicator');
+          const storageUsage = document.getElementById('storage-usage');
+          
+          if (usagePercent < 50) {
+            statusIndicator.className = 'status-indicator good';
+            storageUsage.innerHTML = `Storage usage: ${formatStorageSize(trackerSize)} (${usagePercent}% of limit)`;
+            storageUsage.style.color = '#34c759';
+          } else if (usagePercent < 80) {
+            statusIndicator.className = 'status-indicator warning';
+            storageUsage.innerHTML = `Storage usage: ${formatStorageSize(trackerSize)} (${usagePercent}% of limit)`;
+            storageUsage.style.color = '#ffcc00';
+          } else {
+            statusIndicator.className = 'status-indicator error';
+            storageUsage.innerHTML = `Storage usage: ${formatStorageSize(trackerSize)} (${usagePercent}% of limit)<br>Your data may not fully save. Consider clearing storage.`;
+            storageUsage.style.color = '#ff3b30';
+          }
+          
+          // Set up clear storage button
+          document.getElementById('clear-storage').addEventListener('click', function() {
+            if (confirm('Are you sure you want to clear all locally stored data? This cannot be undone.')) {
+              clearAllLocalStorage();
+              checkStorageStatus();
+            }
+          });
+          
+        } catch (error) {
+          // localStorage is not available
+          document.getElementById('storage-status-indicator').className = 'status-indicator error';
+          document.getElementById('storage-usage').innerHTML = 'Error: Local storage is not available on this browser';
+          document.getElementById('storage-usage').style.color = '#ff3b30';
+          console.error('localStorage is not available:', error);
+        }
+      } catch (error) {
+        console.error('Error checking storage status:', error);
+      }
+    }
+    
+    // Format storage size for display
+    function formatStorageSize(bytes) {
+      if (bytes < 1024) {
+        return bytes + ' bytes';
+      } else if (bytes < 1024 * 1024) {
+        return (bytes / 1024).toFixed(1) + ' KB';
+      } else {
+        return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+      }
+    }
+    
+    // Clear all localStorage related to this app
+    function clearAllLocalStorage() {
+      try {
+        // First clear chunks
+        clearChunkedData();
+        
+        // Clear any other storage
+        const keysToRemove = [];
+        
+        for (let i = 0; i < localStorage.length; i++) {
+          const key = localStorage.key(i);
+          if (key && key.startsWith('figmaTimeTrack')) {
+            keysToRemove.push(key);
+          }
+        }
+        
+        // Remove all keys
+        keysToRemove.forEach(key => {
+          localStorage.removeItem(key);
+        });
+        
+        console.log(`Cleared ${keysToRemove.length} items from localStorage`);
+        
+        // Reset summaryData
+        summaryData = null;
+        inMemoryCache = {};
+        
+        // Update UI
+        const storageUsage = document.getElementById('storage-usage');
+        storageUsage.innerHTML = 'Storage cleared successfully';
+        storageUsage.style.color = '#34c759';
+        
+        // Show a message to the user
+        alert('Local storage has been cleared successfully.');
+      } catch (error) {
+        console.error('Error clearing localStorage:', error);
       }
     }
 </script>
