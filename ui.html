@@ -391,7 +391,8 @@
     let activeFileName = null;
     let activePageName = null;
     let backgroundTracking = true;
-    let summaryData = null; // Track the summary data persistently
+    let summaryData = null;
+    let lastSavedTimestamp = 0;
 
     // Initialize Firebase when config is received
     function initializeFirebase(config) {
@@ -1183,6 +1184,9 @@
         if (message.userId) {
           userId = message.userId;
           console.log('User ID set:', userId);
+          
+          // Store user ID in localStorage for persistence
+          localStorage.setItem('figmaTimeTrackUserId', userId);
         }
         
         // Initialize Firebase with the config
@@ -1241,21 +1245,41 @@
       else if (message.type === 'update-summary') {
         console.log('Received summary update', message.immediate ? '(immediate)' : '');
         
-        // Update summary display with files data
+        // Store the data for persistence
         if (message.files && Object.keys(message.files).length > 0) {
-          // Save to localStorage for persistence
-          saveSummaryToLocalStorage(message.files);
+          console.log('Storing summary data for persistence');
+          summaryData = message.files;
+          lastSavedTimestamp = Date.now();
           
-          // Update summary display with files data
+          // Save to localStorage for persistence between sessions
+          try {
+            localStorage.setItem('figmaTimeTrackSummary', JSON.stringify(summaryData));
+            localStorage.setItem('figmaTimeTrackSummaryTimestamp', lastSavedTimestamp.toString());
+            console.log('Summary data saved to localStorage successfully');
+          } catch (error) {
+            console.error('Error saving to localStorage:', error);
+          }
+          
+          // Update the display
           updateSummaryDisplay(message.files);
-          summaryLoaded = true;
         } else {
           console.log('No files data received in update-summary message');
-          // Check for saved data in localStorage
-          const savedData = loadSummaryFromLocalStorage();
-          if (savedData && Object.keys(savedData).length > 0) {
-            console.log('Using saved data from localStorage for empty update-summary');
-            updateSummaryDisplay(savedData);
+          
+          // Try to use previously stored data
+          if (summaryData) {
+            updateSummaryDisplay(summaryData);
+          } else {
+            // Try to load from localStorage as a last resort
+            try {
+              const savedData = localStorage.getItem('figmaTimeTrackSummary');
+              if (savedData) {
+                console.log('Using localStorage data for empty update-summary');
+                summaryData = JSON.parse(savedData);
+                updateSummaryDisplay(summaryData);
+              }
+            } catch (error) {
+              console.error('Error loading from localStorage:', error);
+            }
           }
         }
         
@@ -1397,120 +1421,123 @@
     function initializeUI() {
       console.log('Initializing UI');
       
-      // Hide the inactive notice initially
-      const inactiveNotice = document.getElementById('inactive-notice');
-      if (inactiveNotice) {
-        inactiveNotice.style.display = 'none';
+      // Try to restore user ID from localStorage
+      const savedUserId = localStorage.getItem('figmaTimeTrackUserId');
+      if (savedUserId) {
+        console.log('Restored user ID from localStorage:', savedUserId);
+        userId = savedUserId;
       }
       
-      // Add global tracking toggle
-      addGlobalTrackingToggle();
-      
-      // Make sure the summary container is ready
-      const summaryContainer = document.getElementById('summary-container');
-      if (summaryContainer && !summaryContainer.innerHTML.trim()) {
-        summaryContainer.innerHTML = '<div class="loading-summary">Loading summary data...</div>';
+      // Try to restore summary data from localStorage
+      try {
+        const savedSummary = localStorage.getItem('figmaTimeTrackSummary');
+        const savedTimestamp = localStorage.getItem('figmaTimeTrackSummaryTimestamp');
+        
+        if (savedSummary) {
+          console.log('Found saved summary in localStorage from:', 
+                     savedTimestamp ? new Date(parseInt(savedTimestamp)).toLocaleString() : 'unknown');
+          
+          summaryData = JSON.parse(savedSummary);
+          if (savedTimestamp) {
+            lastSavedTimestamp = parseInt(savedTimestamp);
+          }
+          
+          // If summary tab is initially active, display the data
+          if (document.getElementById('summary-tab').classList.contains('active')) {
+            updateSummaryDisplay(summaryData);
+          }
+        } else {
+          console.log('No saved summary found in localStorage');
+        }
+      } catch (error) {
+        console.error('Error restoring from localStorage:', error);
       }
       
-      // Set up tab switching for the summary tab
-      setupTabListeners();
-    }
-    
-    // Set up event listeners for tab buttons
-    function setupTabListeners() {
+      // Set up tab buttons
       const tabButtons = document.querySelectorAll('.tab-button');
-      
       tabButtons.forEach(button => {
         button.addEventListener('click', () => {
           const tabId = button.getAttribute('data-tab');
-          switchToTab(tabId);
+          
+          // Remove active class from all buttons and contents
+          document.querySelectorAll('.tab-button').forEach(btn => btn.classList.remove('active'));
+          document.querySelectorAll('.tab-content').forEach(content => {
+            if (content) content.classList.remove('active');
+          });
+          
+          // Add active class to clicked button and corresponding content
+          button.classList.add('active');
+          const content = document.getElementById(tabId);
+          if (content) {
+            content.classList.add('active');
+            
+            // If summary tab activated, handle it specially
+            if (tabId === 'summary-tab') {
+              // Show loading message
+              document.getElementById('summary-loading').textContent = 'Loading summary...';
+              
+              // Use stored data immediately if available
+              if (summaryData) {
+                console.log('Displaying stored summary data');
+                updateSummaryDisplay(summaryData);
+              }
+              
+              // Request fresh data
+              console.log('Requesting fresh summary data');
+              requestSummaryRefresh();
+            }
+          }
         });
       });
-    }
-
-    // Switch to a specific tab
-    function switchToTab(tabId) {
-      // Remove active class from all buttons and content
-      const tabButtons = document.querySelectorAll('.tab-button');
-      const tabContents = document.querySelectorAll('.tab-content');
       
-      tabButtons.forEach(btn => btn.classList.remove('active'));
-      tabContents.forEach(content => {
-        if (content) { // Make sure the element exists
-          content.classList.remove('active');
-        }
-      });
-      
-      // Add active class to corresponding button
-      const activeButton = document.querySelector(`.tab-button[data-tab="${tabId}"]`);
-      if (activeButton) {
-        activeButton.classList.add('active');
-      }
-      
-      // Show the corresponding content
-      const content = document.getElementById(tabId);
-      if (content) {
-        content.classList.add('active');
-        
-        // Special handling for summary tab
-        if (tabId === 'summary-tab') {
-          handleSummaryTabActivation();
-        }
+      // Set up refresh button in summary tab
+      const refreshButton = document.getElementById('refresh-summary');
+      if (refreshButton) {
+        refreshButton.addEventListener('click', requestSummaryRefresh);
       }
     }
-
-    // Handle summary tab activation
-    function handleSummaryTabActivation() {
-      // Show loading message
-      const loadingElement = document.getElementById('summary-loading');
-      if (loadingElement) {
-        loadingElement.style.display = 'block';
-        loadingElement.innerText = 'Loading summary data...';
-      }
+    
+    // Run initialization when page loads
+    window.onload = function() {
+      console.log('Page loaded - initializing UI');
       
-      console.log('Summary tab activated, checking for available data');
+      // Initialize UI components
+      initializeUI();
       
-      // Use a layered data loading approach for immediate feedback:
-      
-      // 1. First check localStorage for cached data (immediate)
-      const savedData = loadSummaryFromLocalStorage();
-      if (savedData && Object.keys(savedData).length > 0) {
-        console.log('Using localStorage data for immediate display on tab activation');
-        summaryData = savedData; // Make sure we update our in-memory copy
-        
-        // Use a small timeout to ensure the tab is visible first
-        setTimeout(() => {
-          updateSummaryDisplay(savedData);
-        }, 10);
-      }
-      // 2. Then check in-memory data if localStorage didn't have anything
-      else if (summaryData && Object.keys(summaryData).length > 0) {
-        console.log('Using in-memory data for immediate display on tab activation');
-        
-        // Use a small timeout to ensure the tab is visible first
-        setTimeout(() => {
-          updateSummaryDisplay(summaryData);
-        }, 10);
-      }
-      
-      // 3. Request fresh data from the plugin (fast)
+      // Request immediate summary data
       setTimeout(() => {
-        console.log('Requesting immediate summary data from plugin');
-        parent.postMessage({ 
-          pluginMessage: { 
-            type: 'get-summary',
-            immediate: true
-          }
-        }, '*');
-      }, 100);
+        parent.postMessage({ pluginMessage: { type: 'get-summary', immediate: true } }, '*');
+      }, 500);
       
-      // 4. Try Firebase as a final option (slower but most authoritative)
-      if (firebaseInitialized && firebaseDb && userId) {
-        setTimeout(() => {
-          console.log('Requesting Firebase data as final data source');
-          loadSummaryFromFirebase(false);
-        }, 1000);
+      // Notify plugin that UI is loaded
+      parent.postMessage({ pluginMessage: { type: 'ui-loaded' } }, '*');
+    };
+
+    // Handle visibility changes
+    document.addEventListener('visibilitychange', () => {
+      const isVisible = !document.hidden;
+      console.log('Visibility changed:', isVisible ? 'visible' : 'hidden');
+      
+      // Notify plugin of visibility change
+      parent.postMessage({ 
+        pluginMessage: { 
+          type: 'ui-visibility-changed', 
+          isVisible: isVisible 
+        } 
+      }, '*');
+      
+      // Refresh data if becoming visible and on summary tab
+      if (isVisible && document.getElementById('summary-tab').classList.contains('active')) {
+        console.log('Refreshing data on visibility change');
+        requestSummaryRefresh();
       }
+    });
+
+    // Request a summary refresh
+    function requestSummaryRefresh() {
+      console.log('Requesting summary refresh');
+      document.getElementById('summary-loading').textContent = 'Refreshing summary...';
+      parent.postMessage({ pluginMessage: { type: 'get-summary', immediate: true } }, '*');
     }
 
     // Save summary data to localStorage
@@ -1522,8 +1549,8 @@
         }
         
         console.log('Saving summary data to localStorage');
-        localStorage.setItem('summaryData', JSON.stringify(data));
-        localStorage.setItem('summaryLastSaved', Date.now().toString());
+        localStorage.setItem('figmaTimeTrackSummary', JSON.stringify(data));
+        localStorage.setItem('figmaTimeTrackSummaryTimestamp', Date.now().toString());
         console.log('Summary data saved to localStorage successfully');
       } catch (error) {
         console.error('Error saving summary data to localStorage:', error);
@@ -1533,13 +1560,13 @@
     // Load summary data from localStorage
     function loadSummaryFromLocalStorage() {
       try {
-        const savedData = localStorage.getItem('summaryData');
+        const savedData = localStorage.getItem('figmaTimeTrackSummary');
         if (!savedData) {
           console.log('No summary data found in localStorage');
           return null;
         }
         
-        const lastSaved = localStorage.getItem('summaryLastSaved');
+        const lastSaved = localStorage.getItem('figmaTimeTrackSummaryTimestamp');
         const parsedData = JSON.parse(savedData);
         
         console.log('Loaded summary data from localStorage, last saved:', 
@@ -1564,446 +1591,6 @@
           immediate: true
         }
       }, '*');
-    }
-
-    // Run initialization when page loads
-    window.onload = () => {
-      // Initialize the UI
-      initializeUI();
-      
-      // Load summary data from localStorage immediately 
-      const savedData = loadSummaryFromLocalStorage();
-      if (savedData && Object.keys(savedData).length > 0) {
-        console.log('Found saved summary data on startup, using immediately');
-        summaryData = savedData;
-        
-        // If summary tab is active, show the data immediately
-        if (document.getElementById('summary-tab').classList.contains('active')) {
-          updateSummaryDisplay(savedData);
-        }
-      }
-      
-      // Check if we're currently tracking and request all files data
-      parent.postMessage({ pluginMessage: { type: 'check-tracking-status' } }, '*');
-      
-      // Request all files data from the plugin
-      parent.postMessage({ pluginMessage: { type: 'get-all-files' } }, '*');
-      
-      // Load summary data on initialization (after a short delay to ensure Firebase is initialized)
-      setTimeout(() => {
-        console.log('Requesting initial summary data');
-        parent.postMessage({
-          pluginMessage: {
-            type: 'request-firebase-summary'
-          }
-        }, '*');
-        
-        // Also explicitly request summary data
-        parent.postMessage({ 
-          pluginMessage: { 
-            type: 'get-summary',
-            immediate: true
-          }
-        }, '*');
-      }, 1000);
-    };
-
-    // Add a time entry to the UI
-    function addTimeEntry(timeEntry) {
-      // Add to recent entries array (limit to 10)
-      recentEntries.unshift(timeEntry);
-      if (recentEntries.length > 10) {
-        recentEntries.pop();
-      }
-      
-      // Update the UI
-      updateRecentEntries();
-    }
-    
-    // Update the recent entries display
-    function updateRecentEntries() {
-      const entriesContainer = document.getElementById('entries-container');
-      entriesContainer.innerHTML = '';
-      
-      if (recentEntries.length === 0) {
-        entriesContainer.innerHTML = '<div class="empty-state">No recent entries</div>';
-        return;
-      }
-      
-      recentEntries.forEach(entry => {
-        const date = new Date(entry.date).toLocaleDateString();
-        const startTime = new Date(entry.startTime).toLocaleTimeString();
-        const duration = formatDisplayTime(entry.duration);
-        
-        const entryElement = document.createElement('div');
-        entryElement.className = 'time-entry';
-        entryElement.innerHTML = `
-          <div class="time-entry-file">${entry.fileName}</div>
-          <div class="time-entry-details">
-            <div class="time-entry-page">${entry.pageName}</div>
-            <div class="time-entry-time">${date} at ${startTime}</div>
-          </div>
-          <div class="time-entry-duration">${duration}</div>
-        `;
-        
-        entriesContainer.appendChild(entryElement);
-      });
-    }
-
-    // Load recent entries from Firebase
-    function loadRecentEntriesFromFirebase(uid) {
-      if (!firebaseDb || !uid) return;
-      
-      try {
-        const entriesRef = firebaseDb.ref(`users/${uid}/timeEntries`);
-        
-        entriesRef.orderByChild('startTime')
-          .limitToLast(10)
-          .once('value')
-          .then(snapshot => {
-            const data = snapshot.val();
-            if (!data) {
-              console.log('No time entries found in Firebase');
-              return;
-            }
-            
-            // Convert object to array and sort by start time (descending)
-            recentEntries = Object.values(data)
-              .sort((a, b) => b.startTime - a.startTime);
-            
-            // Update the UI
-            updateRecentEntries();
-            
-            console.log(`Loaded ${recentEntries.length} recent time entries`);
-          })
-          .catch(error => {
-            console.error('Error loading time entries from Firebase:', error);
-          });
-      } catch (error) {
-        console.error('Error accessing Firebase for time entries:', error);
-      }
-    }
-
-    // Handle visibility changes
-    document.addEventListener('visibilitychange', function() {
-      const isVisible = !document.hidden;
-      console.log('Visibility changed:', isVisible ? 'visible' : 'hidden');
-      
-      // Send visibility state to the plugin
-      parent.postMessage({
-        pluginMessage: {
-          type: 'ui-visibility-changed',
-          isVisible: isVisible
-        }
-      }, '*');
-      
-      // If hidden, update UI to reflect that tracking might be paused
-      if (!isVisible && isTracking) {
-        updateTimerDisplay(false, null);
-      }
-    });
-
-    // Track user interactions with Figma UI
-    document.addEventListener('mousemove', debounce(function() {
-      // Only send if the document is visible
-      if (!document.hidden) {
-        parent.postMessage({
-          pluginMessage: {
-            type: 'user-interaction',
-            source: 'mouse'
-          }
-        }, '*');
-      }
-    }, 1000)); // Debounce to avoid too many messages
-
-    document.addEventListener('keydown', function() {
-      // Only send if the document is visible
-      if (!document.hidden) {
-        parent.postMessage({
-          pluginMessage: {
-            type: 'user-interaction',
-            source: 'keyboard'
-          }
-        }, '*');
-      }
-    });
-
-    document.addEventListener('click', function() {
-      // Only send if the document is visible
-      if (!document.hidden) {
-        parent.postMessage({
-          pluginMessage: {
-            type: 'user-interaction',
-            source: 'click'
-          }
-        }, '*');
-      }
-    });
-
-    // Track window focus/blur events to detect application switching
-    window.addEventListener('blur', function() {
-      console.log('Window lost focus');
-      parent.postMessage({
-        pluginMessage: {
-          type: 'ui-visibility-changed',
-          isVisible: false
-        }
-      }, '*');
-    });
-
-    window.addEventListener('focus', function() {
-      console.log('Window gained focus');
-      parent.postMessage({
-        pluginMessage: {
-          type: 'ui-visibility-changed',
-          isVisible: true
-        }
-      }, '*');
-    });
-
-    // Utility function to debounce events
-    function debounce(func, wait) {
-      let timeout;
-      return function() {
-        const context = this;
-        const args = arguments;
-        clearTimeout(timeout);
-        timeout = setTimeout(function() {
-          func.apply(context, args);
-        }, wait);
-      };
-    }
-
-    // Add a global tracking toggle to the UI
-    function addGlobalTrackingToggle() {
-      const container = document.querySelector('.container');
-      const statusDiv = document.querySelector('.status');
-      
-      // Create toggle element
-      const toggleDiv = document.createElement('div');
-      toggleDiv.className = 'global-tracking-toggle';
-      toggleDiv.innerHTML = `
-        <span class="toggle-label">Background Tracking</span>
-        <label class="toggle-switch">
-          <input type="checkbox" id="global-tracking-toggle" checked>
-          <span class="toggle-slider"></span>
-        </label>
-      `;
-      
-      // Insert after status div
-      if (statusDiv) {
-        statusDiv.after(toggleDiv);
-      } else {
-        container.prepend(toggleDiv);
-      }
-      
-      // Add event listener
-      const toggleInput = document.getElementById('global-tracking-toggle');
-      toggleInput.addEventListener('change', function() {
-        const isEnabled = this.checked;
-        
-        // Send message to plugin
-        parent.postMessage({
-          pluginMessage: {
-            type: 'toggle-global-tracking',
-            enabled: isEnabled
-          }
-        }, '*');
-        
-        // Update UI
-        document.getElementById('status-text').textContent = 
-          isEnabled ? 'Background tracking enabled' : 'Background tracking disabled';
-      });
-    }
-
-    // Set up tabs
-    document.addEventListener('DOMContentLoaded', () => {
-      // Get references to tab elements
-      const tabButtons = document.querySelectorAll('.tab-button');
-      const tabContents = document.querySelectorAll('.tab-content');
-      
-      // Notify plugin that UI is loaded
-      parent.postMessage({ pluginMessage: { type: 'ui-loaded' } }, '*');
-      
-      // Set up visibility change detection
-      document.addEventListener('visibilitychange', () => {
-        const isVisible = !document.hidden;
-        console.log('Visibility changed:', isVisible ? 'visible' : 'hidden');
-        
-        // Notify plugin of visibility change
-        parent.postMessage({ 
-          pluginMessage: { 
-            type: 'ui-visibility-changed', 
-            isVisible: isVisible 
-          } 
-        }, '*');
-        
-        // If becoming visible again and summary tab is active, refresh the data
-        if (isVisible && document.getElementById('summary-tab').classList.contains('active')) {
-          console.log('Plugin UI visible again, refreshing summary data');
-          handleSummaryTabActivation();
-        }
-      });
-      
-      // Set up tab switching using the new switchToTab function
-      tabButtons.forEach(button => {
-        button.addEventListener('click', () => {
-          const tabId = button.getAttribute('data-tab');
-          switchToTab(tabId);
-        });
-      });
-      
-      // Set up start tracking button
-      document.getElementById('start-button').addEventListener('click', () => {
-        parent.postMessage({ pluginMessage: { type: 'start-tracking' } }, '*');
-      });
-      
-      // Set up stop tracking button
-      document.getElementById('stop-button').addEventListener('click', () => {
-        parent.postMessage({ pluginMessage: { type: 'stop-tracking' } }, '*');
-      });
-      
-      // Set up background tracking toggle
-      document.getElementById('background-tracking').addEventListener('change', (e) => {
-        const enabled = e.target.checked;
-        console.log('Background tracking toggled:', enabled);
-        parent.postMessage({ 
-          pluginMessage: { 
-            type: 'toggle-background-tracking', 
-            enabled: enabled 
-          } 
-        }, '*');
-      });
-      
-      // Set up manual sync buttons
-      document.getElementById('sync-to-firebase').addEventListener('click', () => {
-        console.log('Manual sync to Firebase requested');
-        parent.postMessage({ pluginMessage: { type: 'sync-to-firebase' } }, '*');
-      });
-      
-      document.getElementById('sync-from-firebase').addEventListener('click', () => {
-        console.log('Manual sync from Firebase requested');
-        parent.postMessage({ pluginMessage: { type: 'sync-from-firebase' } }, '*');
-      });
-      
-      // Activate the first tab by default or check URL params for tab selection
-      if (tabButtons.length > 0) {
-        // Check if we should activate a specific tab (e.g., from URL parameters)
-        const urlParams = new URLSearchParams(window.location.search);
-        const tabParam = urlParams.get('tab');
-        
-        if (tabParam && document.querySelector(`.tab-button[data-tab="${tabParam}-tab"]`)) {
-          // We have a valid tab parameter, switch to that tab
-          switchToTab(`${tabParam}-tab`);
-        } else {
-          // Default to first tab
-          const firstTabId = tabButtons[0].getAttribute('data-tab');
-          switchToTab(firstTabId);
-        }
-      }
-    });
-
-    // Set up refresh summary button
-    document.getElementById('refresh-summary').addEventListener('click', () => {
-      const summaryContainer = document.getElementById('summary-container');
-      summaryContainer.innerHTML = '<div class="loading-summary">Loading summary data...</div>';
-      
-      // Request fresh data from plugin
-      parent.postMessage({
-        pluginMessage: {
-          type: 'request-firebase-summary'
-        }
-      }, '*');
-    });
-
-    // Set up sync with Firebase button
-    document.getElementById('sync-firebase').addEventListener('click', () => {
-      parent.postMessage({
-        pluginMessage: {
-          type: 'manual-firebase-sync'
-        }
-      }, '*');
-    });
-
-    // Set up export data button
-    document.getElementById('export-data').addEventListener('click', () => {
-      parent.postMessage({
-        pluginMessage: {
-          type: 'export-data'
-        }
-      }, '*');
-    });
-
-    // Set up global tracking toggle
-    document.getElementById('global-tracking-toggle').addEventListener('change', (e) => {
-      parent.postMessage({
-        pluginMessage: {
-          type: 'toggle-global-tracking',
-          enabled: e.target.checked
-        }
-      }, '*');
-    });
-
-    // Handle export data result
-    function handleExportDataResult(data) {
-      const { filesCsv, pagesCsv, entriesCsv } = data;
-      
-      // Function to create a downloadable file
-      function createDownloadLink(content, filename) {
-        const blob = new Blob([content], { type: 'text/csv' });
-        const url = URL.createObjectURL(blob);
-        
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = filename;
-        a.style.display = 'none';
-        document.body.appendChild(a);
-        a.click();
-        
-        setTimeout(() => {
-          document.body.removeChild(a);
-          URL.revokeObjectURL(url);
-        }, 100);
-      }
-      
-      // Create downloads for each CSV
-      try {
-        // Get current date for filename
-        const date = new Date().toISOString().split('T')[0];
-        
-        // Create downloads
-        createDownloadLink(filesCsv, `figma-time-files-${date}.csv`);
-        
-        // Short delay between downloads
-        setTimeout(() => {
-          createDownloadLink(pagesCsv, `figma-time-pages-${date}.csv`);
-          
-          setTimeout(() => {
-            createDownloadLink(entriesCsv, `figma-time-entries-${date}.csv`);
-            
-            // Show success message
-            showMessage('Files exported successfully!');
-          }, 200);
-        }, 200);
-      } catch (error) {
-        console.error('Error creating download links:', error);
-        showErrorMessage('Failed to download export files');
-      }
-    }
-    
-    // Show temporary success message
-    function showMessage(message, duration = 3000) {
-      const messageElement = document.createElement('div');
-      messageElement.className = 'success-message';
-      messageElement.textContent = message;
-      document.body.appendChild(messageElement);
-      
-      setTimeout(() => {
-        messageElement.classList.add('fade-out');
-        setTimeout(() => {
-          document.body.removeChild(messageElement);
-        }, 300);
-      }, duration);
     }
 
     // Add debugging for summary display issues
@@ -2048,126 +1635,104 @@
     }
 
     // Load summary data from Firebase with better error handling and timeout
-    function loadSummaryFromFirebase(retryWithLocal = true) {
-      try {
-        if (!firebaseInitialized || !firebaseDb || !userId) {
-          console.warn('Firebase not ready for loading summary. Using local data.');
-          
-          // First try to show saved data from localStorage
-          const savedData = loadSummaryFromLocalStorage();
-          if (savedData && Object.keys(savedData).length > 0) {
-            console.log('Using saved data from localStorage due to Firebase not being ready');
-            updateSummaryDisplay(savedData);
-          } else if (summaryData) {
-            // Otherwise, show the current summary data if available
-            updateSummaryDisplay(summaryData);
-          }
-          
-          if (retryWithLocal) {
-            // Request local summary as fallback
-            requestLocalSummaryData();
-          }
-          return;
+    function loadSummaryFromFirebase() {
+      if (!firebaseInitialized || !firebaseDb || !userId) {
+        console.log('Firebase not ready, using local data if available');
+        
+        // Try to use stored in-memory data
+        if (summaryData) {
+          updateSummaryDisplay(summaryData);
         }
+        return;
+      }
+      
+      try {
+        console.log('Loading summary data from Firebase for user:', userId);
         
-        updateFirebaseStatus('Loading data from Firebase...');
-        console.log('Loading summary data from Firebase for user', userId);
+        // Show loading message
+        document.getElementById('summary-loading').textContent = 'Loading data from Firebase...';
         
-        // Set a timeout for Firebase operations
-        const timeoutId = setTimeout(() => {
-          console.warn('Firebase data loading timeout, using local data');
-          updateFirebaseStatus('Firebase timeout, using local data', true);
-          
-          // Use stored summary data if available
-          if (summaryData) {
-            updateSummaryDisplay(summaryData);
-          }
-          
-          // Request fresh local data
-          if (retryWithLocal) {
-            requestLocalSummaryData();
-          }
-        }, 4000); // 4 second timeout
+        // Set up a timeout for Firebase operations
+        const timeoutPromise = new Promise((_, reject) => {
+          setTimeout(() => reject(new Error('Firebase timeout')), 5000);
+        });
         
-        const timeDataRef = firebaseDb.ref('timeData/' + userId);
-        timeDataRef.once('value')
+        // Get data from Firebase with timeout
+        Promise.race([
+          timeoutPromise,
+          firebaseDb.ref('timeData/' + userId).once('value')
+        ])
           .then(snapshot => {
-            // Clear the timeout as we got a response
-            clearTimeout(timeoutId);
+            if (!snapshot || !snapshot.val) {
+              throw new Error('Invalid Firebase response');
+            }
             
             const data = snapshot.val();
-            console.log('Firebase data loaded:', data);
+            console.log('Firebase data loaded successfully:', data ? 'has data' : 'empty');
             
             if (data) {
-              summaryData = data; // Store the data in local variable
+              // Store the data for persistence
+              summaryData = data;
+              lastSavedTimestamp = Date.now();
+              
+              // Save to localStorage for persistence
+              try {
+                localStorage.setItem('figmaTimeTrackSummary', JSON.stringify(summaryData));
+                localStorage.setItem('figmaTimeTrackSummaryTimestamp', lastSavedTimestamp.toString());
+                console.log('Firebase data saved to localStorage successfully');
+              } catch (storageError) {
+                console.error('Error saving Firebase data to localStorage:', storageError);
+              }
+              
+              // Update the display
               updateSummaryDisplay(data);
-              
-              // Notify plugin the data was loaded
-              parent.postMessage({ 
-                pluginMessage: { 
-                  type: 'firebase-data-loaded', 
-                  data: data 
-                } 
-              }, '*');
-              
-              updateFirebaseStatus('Data loaded from Firebase');
             } else {
-              console.log('No data found in Firebase, requesting from plugin');
-              
-              // If we have stored summary data, show it immediately
+              console.log('No data in Firebase');
               if (summaryData) {
                 updateSummaryDisplay(summaryData);
               } else {
-                updateSummaryDisplay({});
+                document.getElementById('summary-container').innerHTML = '<p>No tracking data available</p>';
               }
-              
-              if (retryWithLocal) {
-                // Request local summary as fallback
-                requestLocalSummaryData();
-              }
-              
-              updateFirebaseStatus('No data in Firebase, using local', true);
             }
           })
           .catch(error => {
-            // Clear the timeout as we got a response (error)
-            clearTimeout(timeoutId);
+            console.error('Error loading from Firebase:', error);
             
-            console.error('Error loading data from Firebase:', error);
-            updateFirebaseStatus('Firebase error: ' + error.message, true);
-            
-            // Try to show saved data from localStorage
-            const savedData = loadSummaryFromLocalStorage();
-            if (savedData && Object.keys(savedData).length > 0) {
-              console.log('Using saved data from localStorage due to Firebase error');
-              updateSummaryDisplay(savedData);
-            } else if (summaryData) {
-              // If we have stored summary data, show it immediately
+            // On error, use stored data if available
+            if (summaryData) {
+              console.log('Using stored data due to Firebase error');
               updateSummaryDisplay(summaryData);
-            }
-            
-            if (retryWithLocal) {
-              // Request local summary as fallback
-              requestLocalSummaryData();
+            } else {
+              // Try localStorage as a last resort
+              try {
+                const savedData = localStorage.getItem('figmaTimeTrackSummary');
+                if (savedData) {
+                  console.log('Using localStorage data after Firebase error');
+                  summaryData = JSON.parse(savedData);
+                  updateSummaryDisplay(summaryData);
+                } else {
+                  document.getElementById('summary-container').innerHTML = 
+                    `<p class="error">Error loading data: ${error.message}</p>
+                     <button onclick="requestSummaryRefresh()">Retry</button>`;
+                }
+              } catch (storageError) {
+                console.error('Error loading from localStorage:', storageError);
+                document.getElementById('summary-container').innerHTML = 
+                  `<p class="error">Error loading data: ${error.message}</p>
+                   <button onclick="requestSummaryRefresh()">Retry</button>`;
+              }
             }
           });
       } catch (error) {
         console.error('Error in loadSummaryFromFirebase:', error);
-        updateFirebaseStatus('Firebase error: ' + error.message, true);
         
-        // Try to show saved data from localStorage
-        const savedData = loadSummaryFromLocalStorage();
-        if (savedData && Object.keys(savedData).length > 0) {
-          console.log('Using saved data from localStorage due to Firebase error');
-          updateSummaryDisplay(savedData);
-        } else if (summaryData) {
-          // If we have stored summary data, show it immediately
+        // Use stored data on error
+        if (summaryData) {
           updateSummaryDisplay(summaryData);
-        }
-        
-        if (retryWithLocal) {
-          // Request local summary as fallback
-          requestLocalSummaryData();
+        } else {
+          document.getElementById('summary-container').innerHTML = 
+            `<p class="error">Error: ${error.message}</p>
+             <button onclick="requestSummaryRefresh()">Retry</button>`;
         }
       }
     }
