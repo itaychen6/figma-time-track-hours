@@ -293,6 +293,45 @@
     input:checked + .slider:before {
       transform: translateX(20px);
     }
+
+    /* Error message */
+    .error-message {
+      background-color: #fff8f8;
+      border-left: 4px solid #ff3b30;
+      color: #333;
+      padding: 12px;
+      margin: 16px 0;
+      font-size: 13px;
+      line-height: 1.4;
+    }
+    
+    .warning-message {
+      background-color: #fffbf0;
+      border-left: 4px solid #ffcc00;
+      color: #333;
+      padding: 12px;
+      margin: 16px 0;
+      font-size: 13px;
+      line-height: 1.4;
+    }
+    
+    .message-title {
+      font-weight: bold;
+      margin-bottom: 4px;
+    }
+    
+    .message-action {
+      margin-top: 8px;
+    }
+    
+    .message-action button {
+      background-color: #f5f5f5;
+      color: #333;
+      border: 1px solid #ddd;
+      padding: 4px 8px;
+      font-size: 12px;
+      cursor: pointer;
+    }
   </style>
 </head>
 <body>
@@ -394,6 +433,7 @@
     let summaryData = null;
     let lastSavedTimestamp = 0;
     let trackingData = {};
+    let inMemoryCache = {}; // Fallback cache when localStorage fails
 
     // Initialize Firebase when config is received
     function initializeFirebase(config) {
@@ -1327,7 +1367,18 @@
                       'total time:', formatTime(trackingData[fileId].totalSeconds));
           
           // Save to localStorage for persistence
-          saveSummaryToLocalStorage(trackingData);
+          const saveSuccess = saveSummaryToLocalStorage(trackingData);
+          
+          // If localStorage fails, keep data in memory
+          if (!saveSuccess) {
+            console.log('Saving to in-memory cache due to localStorage failure');
+            inMemoryCache = { ...trackingData };
+            
+            // Show storage warning if we have a lot of files
+            if (Object.keys(trackingData).length > 15) {
+              showStorageWarning();
+            }
+          }
           
           // Update summary if on summary tab
           if (document.getElementById('summary-tab').classList.contains('active')) {
@@ -1356,7 +1407,8 @@
             // Save to localStorage for persistence
             const saved = saveSummaryToLocalStorage(message.files);
             if (!saved) {
-              console.warn('Failed to save summary data to localStorage');
+              console.warn('Failed to save to localStorage - using in-memory cache');
+              inMemoryCache = { ...message.files };
             }
             
             // Update the display
@@ -1669,21 +1721,14 @@
           return false;
         }
         
-        // Safely stringify the data
-        let stringData;
-        try {
-          stringData = JSON.stringify(data);
-        } catch (stringifyError) {
-          console.error('Error stringifying data for localStorage:', stringifyError);
-          return false;
-        }
+        // Try to reduce data size before saving
+        const compressedData = compressDataForStorage(data);
         
         // Save to localStorage
         try {
           console.log('Saving summary data to localStorage,', 
-                      Object.keys(data).length, 'files,',
-                      stringData.length, 'characters');
-          localStorage.setItem('figmaTimeTrackSummary', stringData);
+                    Object.keys(compressedData).length, 'files');
+          localStorage.setItem('figmaTimeTrackSummary', JSON.stringify(compressedData));
           const timestamp = Date.now();
           localStorage.setItem('figmaTimeTrackSummaryTimestamp', timestamp.toString());
           console.log('Summary data saved successfully at', new Date(timestamp).toLocaleString());
@@ -1692,22 +1737,16 @@
           // Check if it's a quota error
           if (storageError.name === 'QuotaExceededError' || 
               storageError.name === 'NS_ERROR_DOM_QUOTA_REACHED') {
-            console.error('localStorage quota exceeded. Data too large.');
-            // Try to save the most important data instead
+            console.warn('localStorage quota exceeded. Trying further data reduction.');
+            // Try with more aggressive compression
             try {
-              const reducedData = {};
-              // Take just the 10 most recent files if there are too many
-              const keys = Object.keys(data).slice(0, 10);
-              keys.forEach(key => {
-                reducedData[key] = data[key];
-              });
-              const reducedString = JSON.stringify(reducedData);
-              localStorage.setItem('figmaTimeTrackSummary', reducedString);
+              const minimalData = compressDataForStorage(data, true);
+              localStorage.setItem('figmaTimeTrackSummary', JSON.stringify(minimalData));
               localStorage.setItem('figmaTimeTrackSummaryTimestamp', Date.now().toString());
-              console.log('Saved reduced summary data (10 files only)');
+              console.log('Saved minimal summary data with', Object.keys(minimalData).length, 'files');
               return true;
             } catch (fallbackError) {
-              console.error('Failed to save even reduced data:', fallbackError);
+              console.error('Failed to save even minimal data:', fallbackError);
               return false;
             }
           } else {
@@ -1721,6 +1760,61 @@
       }
     }
     
+    // Compress data for localStorage to avoid quota issues
+    function compressDataForStorage(data, aggressive = false) {
+      // Clone the data to avoid modifying the original
+      const result = {};
+      
+      // Determine how many files to keep
+      const maxFiles = aggressive ? 5 : 20;
+      
+      // Get most recent/important files
+      const fileEntries = Object.entries(data)
+        .filter(([_, fileData]) => fileData && typeof fileData === 'object')
+        .sort((a, b) => {
+          // Sort by lastUpdated (if available) or by totalTime (most time first)
+          const aTime = a[1].lastUpdated || 0;
+          const bTime = b[1].lastUpdated || 0;
+          
+          if (aTime !== bTime) return bTime - aTime;
+          
+          const aTotalTime = getFileTime(a[1]);
+          const bTotalTime = getFileTime(b[1]);
+          return bTotalTime - aTotalTime;
+        })
+        .slice(0, maxFiles);
+      
+      // Add selected files to result with minimal data
+      fileEntries.forEach(([fileId, fileData]) => {
+        // Keep only essential data
+        result[fileId] = {
+          id: fileId,
+          name: fileData.name,
+          totalTime: getFileTime(fileData) * 1000,
+          totalSeconds: getFileTime(fileData)
+        };
+      });
+      
+      return result;
+    }
+    
+    // Helper to get file time from various formats
+    function getFileTime(fileData) {
+      if (!fileData) return 0;
+      
+      if (typeof fileData.totalSeconds === 'number') {
+        return fileData.totalSeconds;
+      } else if (typeof fileData.totalTime === 'number') {
+        return Math.floor(fileData.totalTime / 1000);
+      } else if (fileData.time && typeof fileData.time === 'number') {
+        return Math.floor(fileData.time / 1000);
+      } else if (fileData.duration && typeof fileData.duration === 'number') {
+        return Math.floor(fileData.duration / 1000);
+      }
+      
+      return 0;
+    }
+
     // Load summary data from localStorage with better error handling
     function loadSummaryFromLocalStorage() {
       try {
@@ -1882,6 +1976,10 @@
                   console.log('Using localStorage data after Firebase error');
                   summaryData = JSON.parse(savedData);
                   updateSummaryDisplay(summaryData);
+                } else if (Object.keys(inMemoryCache).length > 0) {
+                  // Use in-memory cache if available
+                  console.log('Using in-memory cache after Firebase error');
+                  updateSummaryDisplay(inMemoryCache);
                 } else {
                   document.getElementById('summary-container').innerHTML = 
                     `<p class="error">Error loading data: ${error.message}</p>
@@ -2052,6 +2150,42 @@
         parent.postMessage({ pluginMessage: { type: 'sync-from-firebase' } }, '*');
       });
     });
+
+    // Show storage warning
+    function showStorageWarning() {
+      // Only show once per session
+      if (localStorage.getItem('storageWarningShown')) {
+        return;
+      }
+      
+      // Create the warning element if it doesn't exist
+      let warningElement = document.getElementById('storage-warning');
+      if (!warningElement) {
+        warningElement = document.createElement('div');
+        warningElement.id = 'storage-warning';
+        warningElement.className = 'warning-message';
+        warningElement.innerHTML = `
+          <div class="message-title">Storage Limitation</div>
+          <p>Your browser's storage is approaching its limit. The plugin will keep your most recent 
+          tracking data, but older entries may not be saved locally.</p>
+          <div class="message-action">
+            <button id="dismiss-storage-warning">Dismiss</button>
+          </div>
+        `;
+        
+        // Add to the top of the active tab
+        const activeTab = document.querySelector('.tab-content.active');
+        if (activeTab) {
+          activeTab.insertBefore(warningElement, activeTab.firstChild);
+          
+          // Add dismiss button handler
+          document.getElementById('dismiss-storage-warning').addEventListener('click', function() {
+            warningElement.style.display = 'none';
+            localStorage.setItem('storageWarningShown', 'true');
+          });
+        }
+      }
+    }
 </script>
 </body>
 </html>
