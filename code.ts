@@ -236,25 +236,35 @@ function initializePlugin() {
   
   // Wait a bit to ensure UI is loaded before starting tracking
   setTimeout(() => {
-    // Start tracking automatically when plugin loads
-    console.log('Starting initial tracking...');
-    handleActivity();
-    
-    // Explicitly update UI with tracking status and all files data after slight delay
-    setTimeout(() => {
-      sendAllFilesData();
-      updateTrackingStatus();
+    // Load background tracking preference
+    figma.clientStorage.getAsync('backgroundTracking').then(value => {
+      if (value !== undefined && value !== null) {
+        backgroundTracking = value;
+      }
+      console.log('Background tracking setting loaded:', backgroundTracking);
       
-      // Also send summary data immediately
-      figma.ui.postMessage({
-        type: 'update-summary',
-        files: files,
-        userId: userId,
-        immediate: true
-      });
+      // Start tracking automatically when plugin loads
+      console.log('Starting initial tracking...');
+      handleActivity();
       
-      console.log('Sent initial tracking status and summary data to UI');
-    }, 1000);
+      // Explicitly update UI with tracking status and all files data after slight delay
+      setTimeout(() => {
+        sendAllFilesData();
+        updateTrackingStatus();
+        
+        // Send the backgroundTracking state to UI
+        figma.ui.postMessage({
+          type: 'background-tracking-state',
+          enabled: backgroundTracking
+        });
+        
+        console.log('Sent initial tracking status to UI');
+      }, 1000);
+    }).catch(error => {
+      console.error('Error loading background tracking setting:', error);
+      // Use default if error
+      console.log('Using default background tracking setting:', backgroundTracking);
+    });
   }, PLUGIN_REACTIVATION_DELAY);
 }
 
@@ -461,68 +471,117 @@ function heartbeat() {
   console.log('Plugin heartbeat - active');
 }
 
-// Save all plugin data
-function saveData() {
-  lastSaveTime = Date.now();
-  
-  // Save to local storage
-  figma.clientStorage.setAsync('files', files);
-  figma.clientStorage.setAsync('backgroundTracking', backgroundTracking);
-  
-  // Sync to Firebase periodically
-  if (Date.now() - lastFirebaseSync > FIREBASE_SYNC_INTERVAL) {
-    saveDataToFirebase();
+// Save data both locally and to Firebase
+async function saveData() {
+  try {
+    // Save to client storage
+    await figma.clientStorage.setAsync('timeTrackingData', files);
+    console.log('Saved data to client storage');
+    lastSaveTime = Date.now();
+    
+    // Check if we should sync with Firebase based on interval
+    const currentTime = Date.now();
+    if (currentTime - lastFirebaseSync > FIREBASE_SYNC_INTERVAL && firebaseInitialized) {
+      saveDataToFirebase();
+    }
+  } catch (error) {
+    console.error('Error saving data:', error);
   }
-  
-  console.log('Saved plugin data');
 }
 
-// Save data to Firebase (through UI)
+// Save data to Firebase
 async function saveDataToFirebase() {
-  console.log('Sending data to Firebase');
+  console.log('Saving data to Firebase...');
+  const currentTime = Date.now();
   
-  if (!firebaseInitialized) {
-    console.log('Firebase not initialized yet, retrying in 2 seconds...');
-    setTimeout(saveDataToFirebase, 2000);
-    return;
-  }
-  
-  lastFirebaseSync = Date.now();
-  
+  // Send files data to UI to save to Firebase
   figma.ui.postMessage({
     type: 'save-to-firebase',
     files: files,
     userId: await userId,
-    timestamp: Date.now() // Add timestamp for tracking updates
+    timestamp: currentTime
   });
+  
+  // Update the last Firebase sync time
+  lastFirebaseSync = currentTime;
+  await figma.clientStorage.setAsync('lastFirebaseSync', currentTime);
 }
 
 // Request data from Firebase
 async function requestFirebaseData() {
-  console.log('Requesting data from Firebase');
-  
-  if (!firebaseInitialized) {
-    console.log('Firebase not initialized yet, retrying in 2 seconds...');
-    setTimeout(requestFirebaseData, 2000);
-    return;
-  }
-  
+  console.log('Requesting data from Firebase...');
+  // Send request to UI to fetch data from Firebase
   figma.ui.postMessage({
-    type: 'load-from-firebase',
+    type: 'request-firebase-data',
     userId: await userId
   });
+  
+  // Update the last Firebase sync time
+  const currentTime = Date.now();
+  lastFirebaseSync = currentTime;
+  await figma.clientStorage.setAsync('lastFirebaseSync', currentTime);
 }
 
 // Load plugin data
-function loadPluginData() {
-  console.log('Loading plugin data');
-  
-  // Start by loading local data
-  loadLocalData();
-  
-  // Also request Firebase data if initialized
-  if (firebaseInitialized) {
-    requestFirebaseData();
+async function loadPluginData() {
+  try {
+    console.log('Loading plugin data...');
+    // Try to load data from Figma document storage
+    const data = await figma.clientStorage.getAsync('timeTrackingData');
+    
+    if (data && Object.keys(data).length > 0) {
+      console.log('Loaded data from client storage', data);
+      files = data;
+      
+      // Check if we need to request from Firebase based on last sync time
+      const lastSync = await figma.clientStorage.getAsync('lastFirebaseSync') || 0;
+      const currentTime = Date.now();
+      
+      // If it's been more than 5 minutes since last sync, request from Firebase
+      if (currentTime - lastSync > FIREBASE_SYNC_INTERVAL && firebaseInitialized) {
+        console.log('It has been a while since last Firebase sync, requesting updated data...');
+        requestFirebaseData();
+      } else {
+        // Otherwise just send the files data to UI
+        sendAllFilesData();
+        
+        // Also send summary update with the loaded data
+        figma.ui.postMessage({
+          type: 'update-summary',
+          files: files,
+          userId: await userId,
+          immediate: true
+        });
+      }
+    } else {
+      console.log('No data in client storage, requesting from Firebase...');
+      // If no local data, try to request from Firebase if initialized
+      if (firebaseInitialized) {
+        requestFirebaseData();
+      } else {
+        // Otherwise, initialize empty files object
+        files = {};
+        sendAllFilesData();
+        
+        // Also init empty summary
+        figma.ui.postMessage({
+          type: 'update-summary',
+          files: {},
+          userId: await userId,
+          immediate: true
+        });
+      }
+    }
+  } catch (error) {
+    console.error('Error loading plugin data:', error);
+    // On error, try to request from Firebase
+    if (firebaseInitialized) {
+      requestFirebaseData();
+    } else {
+      // Otherwise, initialize empty files object
+      files = {};
+      sendAllFilesData();
+    }
   }
 }
 
