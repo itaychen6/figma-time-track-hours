@@ -210,6 +210,25 @@ figma.ui.onmessage = async (message: any) => {
 
 // Start the plugin when UI sends ready message
 function initializePlugin() {
+  // Make sure we register figma events when pages are loaded
+  if (!pagesLoaded) {
+    console.log('Pages not yet loaded, loading now...');
+    figma.loadAllPagesAsync().then(() => {
+      pagesLoaded = true;
+      console.log('Pages loaded, registering event handlers');
+      // Register event handlers
+      figma.on('selectionchange', () => {
+        handleActivity();
+      });
+      
+      figma.on('documentchange', () => {
+        handleActivity();
+      });
+    }).catch(error => {
+      console.error('Error loading pages:', error);
+    });
+  }
+  
   // Send Firebase config to UI immediately
   sendFirebaseConfig();
   
@@ -228,8 +247,11 @@ function initializePlugin() {
   // Initial loading of saved data
   loadPluginData();
   
-  // Check current file immediately
-  checkCurrentFile();
+  // Check current file immediately but with a short delay
+  // to ensure Figma API is ready
+  setTimeout(() => {
+    checkCurrentFile();
+  }, 500);
   
   // Log initialization
   console.log('Plugin initialized');
@@ -249,23 +271,11 @@ function initializePlugin() {
       
       // Explicitly update UI with tracking status and all files data after slight delay
       setTimeout(() => {
-        sendAllFilesData();
         updateTrackingStatus();
-        
-        // Send the backgroundTracking state to UI
-        figma.ui.postMessage({
-          type: 'background-tracking-state',
-          enabled: backgroundTracking
-        });
-        
-        console.log('Sent initial tracking status to UI');
-      }, 1000);
-    }).catch(error => {
-      console.error('Error loading background tracking setting:', error);
-      // Use default if error
-      console.log('Using default background tracking setting:', backgroundTracking);
+        sendAllFilesData();
+      }, 200);
     });
-  }, PLUGIN_REACTIVATION_DELAY);
+  }, 1000);
 }
 
 // Send Firebase configuration to UI
@@ -289,8 +299,24 @@ function handleActivity() {
 function startTracking() {
   if (isTracking) return;
   
+  // Verify we have valid file info before starting
+  if (!activeFileId || !activePage) {
+    console.warn('Cannot start tracking: missing file or page information', {
+      activeFileId,
+      activePage,
+      activeFileName,
+      activePageName
+    });
+    return;
+  }
+  
   isTracking = true;
-  console.log('Started tracking');
+  console.log('Started tracking', {
+    file: activeFileName,
+    page: activePageName,
+    fileId: activeFileId,
+    pageId: activePage
+  });
   
   // Create or update file entry
   if (!files[activeFileId]) {
@@ -359,18 +385,48 @@ function stopTracking() {
 
 // Update UI with current tracking status
 function updateTrackingStatus() {
+  // Find the current start time (if tracking)
+  let startTime = null;
+  
+  if (isTracking && activeFileId && files[activeFileId]?.pages[activePage]?.entries?.length > 0) {
+    const entries = files[activeFileId].pages[activePage].entries;
+    const lastEntry = entries[entries.length - 1];
+    if (lastEntry && !lastEntry.end) {
+      startTime = lastEntry.start;
+    }
+  }
+  
+  // Send detailed status to UI
+  console.log('Sending tracking status to UI:', {
+    isTracking,
+    startTime,
+    activeFileId,
+    activePage,
+    activeFileName,
+    activePageName
+  });
+  
   figma.ui.postMessage({
     type: 'tracking-status',
     isTracking: isTracking,
     backgroundTracking: backgroundTracking,
     fileName: activeFileName,
-    pageName: activePageName
+    pageName: activePageName,
+    startTime: startTime, // Add start time for timer display
+    fileId: activeFileId,
+    pageId: activePage
   });
 }
 
 // Check if the current file has changed
 function checkCurrentFile() {
   try {
+    // Verify current page exists before proceeding
+    if (!figma.currentPage) {
+      console.warn('Current page not available, skipping file check');
+      return;
+    }
+    
     // Get current file and page information
     const currentFileId = figma.currentPage.parent.id;
     const currentPageId = figma.currentPage.id;
@@ -383,6 +439,12 @@ function checkCurrentFile() {
     }
   } catch (error) {
     console.error('Error checking current file:', error);
+    // If we catch an error, log detailed info for debugging
+    console.warn('Debug info:', {
+      currentPageExists: !!figma.currentPage,
+      activeFileId,
+      activePage
+    });
   }
 }
 

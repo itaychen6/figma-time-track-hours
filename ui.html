@@ -1962,6 +1962,104 @@
         totalTimeElement.textContent = formatTime(totalSeconds);
       }
     }
+
+    // Add message event listener
+    window.addEventListener('message', event => {
+      const message = event.data.pluginMessage;
+      if (!message) return;
+      
+      console.log('Message received:', message.type);
+      
+      if (message.type === 'tracking-status') {
+        // Update tracking status UI
+        console.log('Received tracking status:', message);
+        
+        // Update file and page name display
+        activeFileName = message.fileName;
+        activePageName = message.pageName;
+        activeFileId = message.fileId;
+        activePage = message.pageId;
+        
+        // Update tracking state
+        isTracking = message.isTracking;
+        backgroundTracking = message.backgroundTracking;
+        
+        // Update the UI elements
+        updateFileInfo();
+        updateTrackingUI();
+        updateBackgroundTrackingUI();
+        
+        // Update timer display with the correct start time
+        if (message.isTracking && message.startTime) {
+          console.log('Starting timer with startTime:', new Date(message.startTime).toISOString());
+          startTime = message.startTime;
+          
+          // Clear any existing interval
+          if (updateTimerInterval) {
+            clearInterval(updateTimerInterval);
+          }
+          
+          // Start updating the timer every second
+          updateTimerInterval = setInterval(() => {
+            if (startTime) {
+              const now = Date.now();
+              const elapsed = now - startTime;
+              const seconds = Math.floor(elapsed / 1000);
+              
+              const hours = Math.floor(seconds / 3600);
+              const minutes = Math.floor((seconds % 3600) / 60);
+              const secs = seconds % 60;
+              
+              const formattedTime = `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+              
+              // Update the timer text
+              document.getElementById('timer').textContent = formattedTime;
+              
+              // Show the timer dot
+              document.getElementById('timer-dot').style.display = 'block';
+            }
+          }, 1000);
+          
+          // Also update immediately
+          const elapsed = Date.now() - startTime;
+          const seconds = Math.floor(elapsed / 1000);
+          
+          const hours = Math.floor(seconds / 3600);
+          const minutes = Math.floor((seconds % 3600) / 60);
+          const secs = seconds % 60;
+          
+          const formattedTime = `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+          
+          document.getElementById('timer').textContent = formattedTime;
+          document.getElementById('timer-dot').style.display = 'block';
+          document.getElementById('tracking-status').textContent = "Tracking";
+          document.getElementById('tracking-status').className = "status-active";
+          
+          // Update buttons
+          document.getElementById('start-button').style.display = 'none';
+          document.getElementById('stop-button').style.display = 'inline-block';
+        } else {
+          console.log('Stopping timer display');
+          // Stop the timer
+          if (updateTimerInterval) {
+            clearInterval(updateTimerInterval);
+            updateTimerInterval = null;
+          }
+          
+          // Reset the timer display
+          document.getElementById('timer').textContent = '00:00:00';
+          document.getElementById('timer-dot').style.display = 'none';
+          document.getElementById('tracking-status').textContent = "Not Tracking";
+          document.getElementById('tracking-status').className = "status-inactive";
+          
+          // Update buttons
+          document.getElementById('start-button').style.display = 'inline-block';
+          document.getElementById('stop-button').style.display = 'none';
+        }
+      }
+      
+      // ... other message handlers ...
+    });
   </script>
 </body>
 </html>
