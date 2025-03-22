@@ -891,7 +891,7 @@
           refreshButton.onclick = () => {
             console.log('Manual summary refresh requested');
             document.getElementById('summary-loading').textContent = 'Refreshing summary...';
-            parent.postMessage({ pluginMessage: { type: 'get-summary', immediate: true } }, '*');
+            parent.postMessage({ type: 'get-summary', immediate: true }, '*');
           };
           summaryContainer.appendChild(refreshButton);
           
@@ -913,7 +913,7 @@
         document.getElementById('refresh-summary').addEventListener('click', () => {
           console.log('Manual summary refresh requested');
           document.getElementById('summary-loading').textContent = 'Refreshing summary...';
-          parent.postMessage({ pluginMessage: { type: 'get-summary', immediate: true } }, '*');
+          parent.postMessage({ type: 'get-summary', immediate: true }, '*');
         });
         
         // Create summary list
@@ -992,7 +992,7 @@
         retryButton.textContent = 'Retry';
         retryButton.className = 'summary-retry-button';
         retryButton.onclick = () => {
-          parent.postMessage({ pluginMessage: { type: 'get-summary', immediate: true } }, '*');
+          parent.postMessage({ type: 'get-summary', immediate: true }, '*');
         };
         summaryContainer.appendChild(retryButton);
       }
@@ -1964,6 +1964,9 @@
       // Initialize the UI
       initializeUI();
       
+      // Fix any incorrect message formats
+      setTimeout(fixIncorrectMessageFormats, 500);
+      
       // Handle messages from the plugin
       window.onmessage = event => {
         const message = event.data.pluginMessage;
@@ -2062,6 +2065,127 @@
       
       // ... existing code ...
     });
+
+    // Update Firebase status display
+    function updateFirebaseStatus(message, isError = false) {
+      const statusElement = document.getElementById('firebase-status');
+      if (statusElement) {
+        statusElement.textContent = message;
+        statusElement.style.color = isError ? 'red' : 'green';
+        
+        // Clear status after some time if it's not an error
+        if (!isError) {
+          setTimeout(() => {
+            statusElement.textContent = '';
+          }, 5000);
+        }
+      }
+    }
+
+    // Refresh summary data
+    function refreshSummary() {
+      console.log('Manual refresh of summary requested');
+      
+      // Show loading message
+      const loadingElement = document.getElementById('summary-loading');
+      if (loadingElement) {
+        loadingElement.style.display = 'block';
+        loadingElement.textContent = 'Refreshing summary data...';
+      }
+      
+      // First try Firebase if initialized
+      if (firebaseInitialized && firebaseDb) {
+        try {
+          loadSummaryFromFirebase(true);
+        } catch (error) {
+          console.error('Error refreshing from Firebase:', error);
+          // Fall back to local data
+          requestLocalSummaryData();
+        }
+      } else {
+        // If Firebase not initialized, use local data
+        requestLocalSummaryData();
+      }
+    }
+
+    // Fix all the incorrect message formats in the file
+    function fixIncorrectMessageFormats() {
+      // Find and add event listeners to potential refresh buttons
+      const refreshButtons = document.querySelectorAll('.refresh-btn, .summary-refresh-button, .summary-retry-button');
+      refreshButtons.forEach(button => {
+        // Remove any existing listeners
+        const newButton = button.cloneNode(true);
+        button.parentNode.replaceChild(newButton, button);
+        
+        // Add proper event listener
+        newButton.addEventListener('click', refreshSummary);
+      });
+    }
+
+    // Request local summary data from the plugin
+    function requestLocalSummaryData() {
+      console.log('Requesting local summary data');
+      parent.postMessage({ 
+        pluginMessage: { 
+          type: 'get-summary', 
+          immediate: true 
+        }
+      }, '*');
+    }
+
+    // Initialize Firebase with retry mechanism
+    function loadFirebaseConfig(config) {
+      try {
+        console.log('Initializing Firebase with provided config...');
+        if (!firebase) {
+          console.error('Firebase SDK not loaded!');
+          updateFirebaseStatus('Firebase SDK not loaded', true);
+          return;
+        }
+        
+        firebaseConfig = config;
+        if (!firebase.apps.length) {
+          firebaseApp = firebase.initializeApp(firebaseConfig);
+        } else {
+          firebaseApp = firebase.app();
+        }
+        
+        // Add connection state detection
+        const connectedRef = firebase.database().ref('.info/connected');
+        connectedRef.on('value', (snap) => {
+          if (snap.val() === true) {
+            console.log('Connected to Firebase');
+            updateFirebaseStatus('Connected to Firebase');
+          } else {
+            console.log('Not connected to Firebase');
+            updateFirebaseStatus('Firebase connection lost', true);
+            
+            // If we're on summary tab, use local data as fallback
+            if (document.getElementById('summary-tab').classList.contains('active')) {
+              requestLocalSummaryData();
+            }
+          }
+        });
+        
+        firebaseDb = firebase.database();
+        firebaseInitialized = true;
+        updateFirebaseStatus('Firebase connected');
+        
+        // Tell the plugin Firebase is ready
+        parent.postMessage({ pluginMessage: { type: 'firebase-init-complete' } }, '*');
+        
+        // Immediately load summary data if available
+        loadSummaryFromFirebase();
+        
+        console.log('Firebase initialized successfully');
+      } catch (error) {
+        console.error('Firebase initialization error:', error);
+        updateFirebaseStatus('Firebase error: ' + error.message, true);
+        
+        // Fall back to local data for summary
+        requestLocalSummaryData();
+      }
+    }
   </script>
 </body>
 </html>
