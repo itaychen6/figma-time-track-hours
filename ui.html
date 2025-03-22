@@ -393,6 +393,7 @@
     let backgroundTracking = true;
     let summaryData = null;
     let lastSavedTimestamp = 0;
+    let trackingData = {};
 
     // Initialize Firebase when config is received
     function initializeFirebase(config) {
@@ -987,13 +988,14 @@
       }
     }
 
-    // Update summary display with better file name handling and 24-hour persistence
+    // Update summary display with better file name handling and time tracking
     function updateSummaryDisplay(filesData) {
       try {
-        console.log('Updating summary display with data:', filesData);
-        
-        // Save the data to localStorage for persistence
-        saveSummaryToLocalStorage(filesData);
+        console.log('Updating summary display with data:', 
+                    filesData ? (typeof filesData === 'object' ? 
+                                Object.keys(filesData).length + ' files' : 
+                                typeof filesData) : 
+                    'no data');
         
         // Get the summary container
         const summaryContainer = document.getElementById('summary-container');
@@ -1048,30 +1050,55 @@
         // Track total time across all files
         let totalSeconds = 0;
         
-        // Process each file
+        // Debug the data structure if needed
+        console.log('Processing files data:', 
+                   typeof filesData === 'object' ? 
+                   'Object with ' + Object.keys(filesData).length + ' keys' : 
+                   typeof filesData);
+        
+        // Sort files by time spent (descending) for better display
+        const fileEntries = [];
+        
+        // Process each file and collect valid entries
         Object.keys(filesData).forEach((fileId) => {
           try {
             const file = filesData[fileId];
             
-            // Skip files with no time tracked or no name
-            if (!file || (!file.totalSeconds && !file.totalTime) || !file.name) {
+            // Skip invalid data
+            if (!file) {
+              console.log('Skipping undefined file data for ID:', fileId);
               return;
             }
             
-            // Get the file time (handle both totalSeconds and totalTime formats)
-            const fileSeconds = file.totalSeconds || Math.floor(file.totalTime / 1000) || 0;
+            // Debug the file data structure
+            console.log('Processing file:', fileId, 
+                       'name:', file.name || 'unnamed', 
+                       'totalSeconds:', file.totalSeconds || 'none',
+                       'totalTime:', file.totalTime || 'none');
             
-            // Skip files with no time
-            if (fileSeconds === 0) {
+            // Get the file time (handle different formats)
+            let fileSeconds = 0;
+            
+            if (typeof file.totalSeconds === 'number') {
+              fileSeconds = file.totalSeconds;
+            } else if (typeof file.totalTime === 'number') {
+              fileSeconds = Math.floor(file.totalTime / 1000);
+            } else if (file.time && typeof file.time === 'number') {
+              fileSeconds = Math.floor(file.time / 1000);
+            } else if (file.duration && typeof file.duration === 'number') {
+              fileSeconds = Math.floor(file.duration / 1000);
+            }
+            
+            // Skip files with no time tracked
+            if (fileSeconds <= 0) {
+              console.log('Skipping file with no time:', file.name || fileId);
               return;
             }
             
-            totalSeconds += fileSeconds;
+            // Get the clean file name
+            let fileName = file.name || file.fileName || fileId;
             
-            // Get the clean file name (remove path and extension if present)
-            let fileName = file.name;
-            
-            // Extract just the file name from paths like "path/to/filename.fig"
+            // Remove path if present
             if (fileName.includes('/')) {
               fileName = fileName.split('/').pop();
             }
@@ -1081,28 +1108,44 @@
               fileName = fileName.substring(0, fileName.length - 4);
             }
             
-            // Create file entry
-            const fileEntry = document.createElement('div');
-            fileEntry.className = 'summary-file-entry';
+            // Add to entries array for sorting
+            fileEntries.push({
+              id: fileId,
+              name: fileName,
+              seconds: fileSeconds
+            });
             
-            // Format the time
-            const hours = Math.floor(fileSeconds / 3600);
-            const minutes = Math.floor((fileSeconds % 3600) / 60);
-            const seconds = fileSeconds % 60;
-            
-            const formattedTime = `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
-            
-            // Set the content
-            fileEntry.innerHTML = `
-              <div class="summary-file-name">${fileName || 'Unnamed File'}</div>
-              <div class="summary-file-time">${formattedTime}</div>
-            `;
-            
-            // Add the entry to the list
-            summaryList.appendChild(fileEntry);
+            // Add to total
+            totalSeconds += fileSeconds;
           } catch (fileError) {
             console.error('Error processing file in summary:', fileError);
           }
+        });
+        
+        // Sort by time spent (descending)
+        fileEntries.sort((a, b) => b.seconds - a.seconds);
+        
+        // Add entries to the list
+        fileEntries.forEach(entry => {
+          // Format the time
+          const hours = Math.floor(entry.seconds / 3600);
+          const minutes = Math.floor((entry.seconds % 3600) / 60);
+          const seconds = Math.floor(entry.seconds % 60);
+          
+          const formattedTime = `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
+          
+          // Create file entry
+          const fileEntry = document.createElement('div');
+          fileEntry.className = 'summary-file-entry';
+          
+          // Set the content
+          fileEntry.innerHTML = `
+            <div class="summary-file-name">${entry.name || 'Unnamed File'}</div>
+            <div class="summary-file-time">${formattedTime}</div>
+          `;
+          
+          // Add the entry to the list
+          summaryList.appendChild(fileEntry);
         });
         
         // Add the list to the container
@@ -1115,7 +1158,7 @@
         // Format total time
         const totalHours = Math.floor(totalSeconds / 3600);
         const totalMinutes = Math.floor((totalSeconds % 3600) / 60);
-        const totalSecs = totalSeconds % 60;
+        const totalSecs = Math.floor(totalSeconds % 60);
         
         const formattedTotal = `${totalHours.toString().padStart(2, '0')}:${totalMinutes.toString().padStart(2, '0')}:${totalSecs.toString().padStart(2, '0')}`;
         
@@ -1127,9 +1170,12 @@
         summaryContainer.appendChild(totalTimeElement);
         
         // Store the summary data for persistence
-        summaryData = filesData;
+        if (Object.keys(filesData).length > 0) {
+          summaryData = filesData;
+          saveSummaryToLocalStorage(filesData);
+        }
         
-        console.log('Summary display updated successfully');
+        console.log('Summary display updated successfully. Total time:', formattedTotal);
         
       } catch (error) {
         console.error('Error updating summary display:', error);
@@ -1145,7 +1191,7 @@
         retryButton.onclick = () => {
           // Try to load from localStorage first
           const savedData = loadSummaryFromLocalStorage();
-          if (savedData && Object.keys(savedData).length > 0) {
+          if (savedData) {
             console.log('Using saved data from localStorage after error');
             updateSummaryDisplay(savedData);
           } else {
@@ -1177,6 +1223,8 @@
       console.log('Message received from plugin:', message.type);
       
       // Handle different message types
+      
+      // Firebase config handler
       if (message.type === 'firebase-config') {
         console.log('Received Firebase config');
         
@@ -1191,8 +1239,9 @@
         
         // Initialize Firebase with the config
         initializeFirebase(message.config);
-      } 
+      }
       
+      // Handle tracking status
       else if (message.type === 'tracking-status') {
         console.log('Received tracking status:', message.isTracking);
         
@@ -1209,8 +1258,9 @@
         
         // Display active file/page names
         updateFileInfo();
-      } 
+      }
       
+      // Track file changes
       else if (message.type === 'file-changed') {
         console.log('File changed notification received');
         
@@ -1228,64 +1278,135 @@
           console.log('Resetting timer display due to file change');
           resetTimerDisplay();
         }
-      } 
+      }
       
-      else if (message.type === 'files-updated') {
-        console.log('Files data updated');
+      // Handle tracking update
+      else if (message.type === 'tracking-update' || message.type === 'update-tracking') {
+        console.log('Received tracking update:', message.file ? message.file.name : 'no file', 
+                    'time:', message.time || 'unknown');
         
-        // Store files data
-        files = message.files;
-        activeFileId = message.activeFileId;
-        activePage = message.activePage;
-        
-        // Update file list
-        updateFilesList();
-      } 
+        // Store the tracking data for the current file
+        if (message.file && message.time) {
+          // Update the in-memory tracking data
+          if (!trackingData) trackingData = {};
+          
+          const fileId = message.file.id || message.file.key || message.file.name;
+          if (!fileId) {
+            console.warn('Tracking update missing file ID');
+            return;
+          }
+          
+          // Create or update the file entry
+          if (!trackingData[fileId]) {
+            trackingData[fileId] = {
+              id: fileId,
+              name: message.file.name,
+              totalTime: 0,
+              lastUpdated: Date.now()
+            };
+          }
+          
+          // Update the time (convert to seconds if needed)
+          let timeInSeconds = 0;
+          if (typeof message.time === 'number') {
+            if (message.time > 10000) {
+              // Assume it's in milliseconds
+              timeInSeconds = Math.floor(message.time / 1000);
+            } else {
+              // Assume it's already in seconds
+              timeInSeconds = message.time;
+            }
+          }
+          
+          // Update the tracking data
+          trackingData[fileId].totalTime += timeInSeconds * 1000; // Store as milliseconds
+          trackingData[fileId].totalSeconds = Math.floor(trackingData[fileId].totalTime / 1000);
+          trackingData[fileId].lastUpdated = Date.now();
+          
+          console.log('Updated tracking data for file:', trackingData[fileId].name, 
+                      'total time:', formatTime(trackingData[fileId].totalSeconds));
+          
+          // Save to localStorage for persistence
+          saveSummaryToLocalStorage(trackingData);
+          
+          // Update summary if on summary tab
+          if (document.getElementById('summary-tab').classList.contains('active')) {
+            updateSummaryDisplay(trackingData);
+          }
+        }
+      }
       
+      // Handle update-summary message
       else if (message.type === 'update-summary') {
         console.log('Received summary update', message.immediate ? '(immediate)' : '');
         
         // Store the data for persistence
-        if (message.files && Object.keys(message.files).length > 0) {
-          console.log('Storing summary data for persistence');
-          summaryData = message.files;
-          lastSavedTimestamp = Date.now();
+        if (message.files) {
+          console.log('Received files data from plugin:', 
+                     message.files ? 
+                     (typeof message.files === 'object' ? Object.keys(message.files).length + ' files' : typeof message.files) 
+                     : 'no data');
           
-          // Save to localStorage for persistence between sessions
-          try {
-            localStorage.setItem('figmaTimeTrackSummary', JSON.stringify(summaryData));
-            localStorage.setItem('figmaTimeTrackSummaryTimestamp', lastSavedTimestamp.toString());
-            console.log('Summary data saved to localStorage successfully');
-          } catch (error) {
-            console.error('Error saving to localStorage:', error);
+          // Make sure it's a valid object
+          if (typeof message.files === 'object' && message.files !== null) {
+            // Store data in memory
+            summaryData = message.files;
+            lastSavedTimestamp = Date.now();
+            
+            // Save to localStorage for persistence
+            const saved = saveSummaryToLocalStorage(message.files);
+            if (!saved) {
+              console.warn('Failed to save summary data to localStorage');
+            }
+            
+            // Update the display
+            updateSummaryDisplay(message.files);
+          } else {
+            console.error('Invalid files data received:', message.files);
+            
+            // Try to use previously stored data
+            if (summaryData) {
+              console.log('Using previously stored in-memory data');
+              updateSummaryDisplay(summaryData);
+            } else {
+              // Try to load from localStorage as a last resort
+              const savedData = loadSummaryFromLocalStorage();
+              if (savedData) {
+                console.log('Using localStorage data due to invalid received data');
+                summaryData = savedData;
+                updateSummaryDisplay(savedData);
+              } else {
+                // No data available
+                document.getElementById('summary-container').innerHTML = 
+                  '<p class="no-data">No tracking data available</p>';
+              }
+            }
           }
-          
-          // Update the display
-          updateSummaryDisplay(message.files);
         } else {
           console.log('No files data received in update-summary message');
           
           // Try to use previously stored data
           if (summaryData) {
+            console.log('Using previously stored in-memory data');
             updateSummaryDisplay(summaryData);
           } else {
             // Try to load from localStorage as a last resort
-            try {
-              const savedData = localStorage.getItem('figmaTimeTrackSummary');
-              if (savedData) {
-                console.log('Using localStorage data for empty update-summary');
-                summaryData = JSON.parse(savedData);
-                updateSummaryDisplay(summaryData);
-              }
-            } catch (error) {
-              console.error('Error loading from localStorage:', error);
+            const savedData = loadSummaryFromLocalStorage();
+            if (savedData) {
+              console.log('Using localStorage data due to missing received data');
+              summaryData = savedData;
+              updateSummaryDisplay(savedData);
+            } else {
+              // No data available
+              document.getElementById('summary-container').innerHTML = 
+                '<p class="no-data">No tracking data available</p>';
             }
           }
         }
         
         // Hide loading message
         document.getElementById('summary-loading').textContent = '';
-      } 
+      }
       
       else if (message.type === 'save-to-firebase') {
         console.log('Saving data to Firebase');
@@ -1529,41 +1650,103 @@
       parent.postMessage({ pluginMessage: { type: 'get-summary', immediate: true } }, '*');
     }
 
-    // Save summary data to localStorage
+    // Save summary data to localStorage with better error handling
     function saveSummaryToLocalStorage(data) {
       try {
-        if (!data || Object.keys(data).length === 0) {
-          console.log('No summary data to save to localStorage');
-          return;
+        if (!data) {
+          console.warn('Attempted to save null or undefined data to localStorage');
+          return false;
         }
         
-        console.log('Saving summary data to localStorage');
-        localStorage.setItem('figmaTimeTrackSummary', JSON.stringify(data));
-        localStorage.setItem('figmaTimeTrackSummaryTimestamp', Date.now().toString());
-        console.log('Summary data saved to localStorage successfully');
+        if (typeof data !== 'object') {
+          console.warn('Attempted to save non-object data to localStorage:', typeof data);
+          return false;
+        }
+        
+        // Check if data is empty
+        if (Object.keys(data).length === 0) {
+          console.log('No data to save to localStorage (empty object)');
+          return false;
+        }
+        
+        // Safely stringify the data
+        let stringData;
+        try {
+          stringData = JSON.stringify(data);
+        } catch (stringifyError) {
+          console.error('Error stringifying data for localStorage:', stringifyError);
+          return false;
+        }
+        
+        // Save to localStorage
+        try {
+          console.log('Saving summary data to localStorage,', 
+                      Object.keys(data).length, 'files,',
+                      stringData.length, 'characters');
+          localStorage.setItem('figmaTimeTrackSummary', stringData);
+          const timestamp = Date.now();
+          localStorage.setItem('figmaTimeTrackSummaryTimestamp', timestamp.toString());
+          console.log('Summary data saved successfully at', new Date(timestamp).toLocaleString());
+          return true;
+        } catch (storageError) {
+          // Check if it's a quota error
+          if (storageError.name === 'QuotaExceededError' || 
+              storageError.name === 'NS_ERROR_DOM_QUOTA_REACHED') {
+            console.error('localStorage quota exceeded. Data too large.');
+            // Try to save the most important data instead
+            try {
+              const reducedData = {};
+              // Take just the 10 most recent files if there are too many
+              const keys = Object.keys(data).slice(0, 10);
+              keys.forEach(key => {
+                reducedData[key] = data[key];
+              });
+              const reducedString = JSON.stringify(reducedData);
+              localStorage.setItem('figmaTimeTrackSummary', reducedString);
+              localStorage.setItem('figmaTimeTrackSummaryTimestamp', Date.now().toString());
+              console.log('Saved reduced summary data (10 files only)');
+              return true;
+            } catch (fallbackError) {
+              console.error('Failed to save even reduced data:', fallbackError);
+              return false;
+            }
+          } else {
+            console.error('Error saving to localStorage:', storageError);
+            return false;
+          }
+        }
       } catch (error) {
-        console.error('Error saving summary data to localStorage:', error);
+        console.error('Unexpected error in saveSummaryToLocalStorage:', error);
+        return false;
       }
     }
     
-    // Load summary data from localStorage
+    // Load summary data from localStorage with better error handling
     function loadSummaryFromLocalStorage() {
       try {
+        console.log('Attempting to load summary data from localStorage');
         const savedData = localStorage.getItem('figmaTimeTrackSummary');
+        
         if (!savedData) {
           console.log('No summary data found in localStorage');
           return null;
         }
         
-        const lastSaved = localStorage.getItem('figmaTimeTrackSummaryTimestamp');
-        const parsedData = JSON.parse(savedData);
-        
-        console.log('Loaded summary data from localStorage, last saved:', 
-                   lastSaved ? new Date(parseInt(lastSaved)).toLocaleString() : 'unknown');
-        
-        return parsedData;
+        // Safely parse the JSON data
+        try {
+          const parsedData = JSON.parse(savedData);
+          console.log('Successfully loaded summary data from localStorage', 
+                      Object.keys(parsedData).length, 'files');
+          return parsedData;
+        } catch (parseError) {
+          console.error('Error parsing localStorage data:', parseError);
+          // If data is corrupt, remove it
+          localStorage.removeItem('figmaTimeTrackSummary');
+          localStorage.removeItem('figmaTimeTrackSummaryTimestamp');
+          return null;
+        }
       } catch (error) {
-        console.error('Error loading summary data from localStorage:', error);
+        console.error('Error accessing localStorage:', error);
         return null;
       }
     }
