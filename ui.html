@@ -571,13 +571,26 @@
     // Check if summary tab is active and load data if needed
     function checkSummaryTabAndLoadData() {
       // If summary tab is active and data hasn't been loaded yet
-      if (document.getElementById('summary-tab').classList.contains('active') && !summaryLoaded) {
-        console.log('Summary tab is active, requesting immediate data');
-        // Request summary data from plugin
-        parent.postMessage({ pluginMessage: { 
-          type: 'get-summary',
-          immediate: true
-        } }, '*');
+      if (document.getElementById('summary-tab').classList.contains('active')) {
+        console.log('Summary tab is active, checking for data');
+        
+        // First try to use localStorage data if available
+        const savedData = loadSummaryFromLocalStorage();
+        if (savedData && Object.keys(savedData).length > 0) {
+          console.log('Using saved data from localStorage for tab activation');
+          summaryData = savedData;
+          updateSummaryDisplay(savedData);
+        }
+        // Then if we have in-memory data, use that
+        else if (summaryData && Object.keys(summaryData).length > 0) {
+          console.log('Using existing in-memory data for tab activation');
+          updateSummaryDisplay(summaryData);
+        }
+        // Otherwise request fresh data
+        else {
+          console.log('No data found, requesting fresh data');
+          requestLocalSummaryData();
+        }
       }
     }
 
@@ -1229,8 +1242,22 @@
         console.log('Received summary update', message.immediate ? '(immediate)' : '');
         
         // Update summary display with files data
-        updateSummaryDisplay(message.files);
-        summaryLoaded = true;
+        if (message.files && Object.keys(message.files).length > 0) {
+          // Save to localStorage for persistence
+          saveSummaryToLocalStorage(message.files);
+          
+          // Update summary display with files data
+          updateSummaryDisplay(message.files);
+          summaryLoaded = true;
+        } else {
+          console.log('No files data received in update-summary message');
+          // Check for saved data in localStorage
+          const savedData = loadSummaryFromLocalStorage();
+          if (savedData && Object.keys(savedData).length > 0) {
+            console.log('Using saved data from localStorage for empty update-summary');
+            updateSummaryDisplay(savedData);
+          }
+        }
         
         // Hide loading message
         document.getElementById('summary-loading').textContent = '';
@@ -1379,26 +1406,113 @@
       // Add global tracking toggle
       addGlobalTrackingToggle();
       
-      // Initialize the summary container
+      // Make sure the summary container is ready
       const summaryContainer = document.getElementById('summary-container');
-      if (summaryContainer) {
+      if (summaryContainer && !summaryContainer.innerHTML.trim()) {
         summaryContainer.innerHTML = '<div class="loading-summary">Loading summary data...</div>';
-        
-        // Try to load summary data from localStorage first
-        const savedSummaryData = loadSummaryFromLocalStorage();
-        if (savedSummaryData && Object.keys(savedSummaryData).length > 0) {
-          console.log('Found saved summary data in localStorage, displaying immediately');
-          summaryData = savedSummaryData;
-          updateSummaryDisplay(savedSummaryData);
-        }
-        
-        // Request immediate summary data (will fallback to local if needed)
-        setTimeout(() => {
-          requestLocalSummaryData();
-        }, 500);
       }
+      
+      // Set up tab switching for the summary tab
+      setupTabListeners();
     }
     
+    // Set up event listeners for tab buttons
+    function setupTabListeners() {
+      const tabButtons = document.querySelectorAll('.tab-button');
+      
+      tabButtons.forEach(button => {
+        button.addEventListener('click', () => {
+          const tabId = button.getAttribute('data-tab');
+          switchToTab(tabId);
+        });
+      });
+    }
+
+    // Switch to a specific tab
+    function switchToTab(tabId) {
+      // Remove active class from all buttons and content
+      const tabButtons = document.querySelectorAll('.tab-button');
+      const tabContents = document.querySelectorAll('.tab-content');
+      
+      tabButtons.forEach(btn => btn.classList.remove('active'));
+      tabContents.forEach(content => {
+        if (content) { // Make sure the element exists
+          content.classList.remove('active');
+        }
+      });
+      
+      // Add active class to corresponding button
+      const activeButton = document.querySelector(`.tab-button[data-tab="${tabId}"]`);
+      if (activeButton) {
+        activeButton.classList.add('active');
+      }
+      
+      // Show the corresponding content
+      const content = document.getElementById(tabId);
+      if (content) {
+        content.classList.add('active');
+        
+        // Special handling for summary tab
+        if (tabId === 'summary-tab') {
+          handleSummaryTabActivation();
+        }
+      }
+    }
+
+    // Handle summary tab activation
+    function handleSummaryTabActivation() {
+      // Show loading message
+      const loadingElement = document.getElementById('summary-loading');
+      if (loadingElement) {
+        loadingElement.style.display = 'block';
+        loadingElement.innerText = 'Loading summary data...';
+      }
+      
+      console.log('Summary tab activated, checking for available data');
+      
+      // Use a layered data loading approach for immediate feedback:
+      
+      // 1. First check localStorage for cached data (immediate)
+      const savedData = loadSummaryFromLocalStorage();
+      if (savedData && Object.keys(savedData).length > 0) {
+        console.log('Using localStorage data for immediate display on tab activation');
+        summaryData = savedData; // Make sure we update our in-memory copy
+        
+        // Use a small timeout to ensure the tab is visible first
+        setTimeout(() => {
+          updateSummaryDisplay(savedData);
+        }, 10);
+      }
+      // 2. Then check in-memory data if localStorage didn't have anything
+      else if (summaryData && Object.keys(summaryData).length > 0) {
+        console.log('Using in-memory data for immediate display on tab activation');
+        
+        // Use a small timeout to ensure the tab is visible first
+        setTimeout(() => {
+          updateSummaryDisplay(summaryData);
+        }, 10);
+      }
+      
+      // 3. Request fresh data from the plugin (fast)
+      setTimeout(() => {
+        console.log('Requesting immediate summary data from plugin');
+        parent.postMessage({ 
+          pluginMessage: { 
+            type: 'get-summary',
+            immediate: true
+          }
+        }, '*');
+      }, 100);
+      
+      // 4. Try Firebase as a final option (slower but most authoritative)
+      if (firebaseInitialized && firebaseDb && userId) {
+        setTimeout(() => {
+          console.log('Requesting Firebase data as final data source');
+          loadSummaryFromFirebase(false);
+        }, 1000);
+      }
+    }
+
     // Save summary data to localStorage
     function saveSummaryToLocalStorage(data) {
       try {
@@ -1457,18 +1571,40 @@
       // Initialize the UI
       initializeUI();
       
+      // Load summary data from localStorage immediately 
+      const savedData = loadSummaryFromLocalStorage();
+      if (savedData && Object.keys(savedData).length > 0) {
+        console.log('Found saved summary data on startup, using immediately');
+        summaryData = savedData;
+        
+        // If summary tab is active, show the data immediately
+        if (document.getElementById('summary-tab').classList.contains('active')) {
+          updateSummaryDisplay(savedData);
+        }
+      }
+      
       // Check if we're currently tracking and request all files data
       parent.postMessage({ pluginMessage: { type: 'check-tracking-status' } }, '*');
-      requestAllFilesData();
+      
+      // Request all files data from the plugin
+      parent.postMessage({ pluginMessage: { type: 'get-all-files' } }, '*');
       
       // Load summary data on initialization (after a short delay to ensure Firebase is initialized)
       setTimeout(() => {
+        console.log('Requesting initial summary data');
         parent.postMessage({
           pluginMessage: {
             type: 'request-firebase-summary'
           }
         }, '*');
-        console.log('Requesting initial summary data');
+        
+        // Also explicitly request summary data
+        parent.postMessage({ 
+          pluginMessage: { 
+            type: 'get-summary',
+            immediate: true
+          }
+        }, '*');
       }, 1000);
     };
 
@@ -1682,7 +1818,7 @@
 
     // Set up tabs
     document.addEventListener('DOMContentLoaded', () => {
-      // Set up tab switching
+      // Get references to tab elements
       const tabButtons = document.querySelectorAll('.tab-button');
       const tabContents = document.querySelectorAll('.tab-content');
       
@@ -1701,69 +1837,19 @@
             isVisible: isVisible 
           } 
         }, '*');
+        
+        // If becoming visible again and summary tab is active, refresh the data
+        if (isVisible && document.getElementById('summary-tab').classList.contains('active')) {
+          console.log('Plugin UI visible again, refreshing summary data');
+          handleSummaryTabActivation();
+        }
       });
       
-      // Set up tab switching
+      // Set up tab switching using the new switchToTab function
       tabButtons.forEach(button => {
         button.addEventListener('click', () => {
-          // Remove active class from all buttons and content
-          tabButtons.forEach(btn => btn.classList.remove('active'));
-          tabContents.forEach(content => {
-            if (content) { // Make sure the element exists
-              content.classList.remove('active');
-            }
-          });
-          
-          // Add active class to clicked button
-          button.classList.add('active');
-          
-          // Get the tab ID
           const tabId = button.getAttribute('data-tab');
-          
-          // Show the corresponding content
-          const content = document.getElementById(tabId);
-          if (content) {
-            content.classList.add('active');
-            
-            // If summary tab is selected
-            if (tabId === 'summary-tab') {
-              // Show loading message
-              document.getElementById('summary-loading').style.display = 'block';
-              document.getElementById('summary-loading').innerText = 'Generating summary from your tracked time...';
-              
-              // First, try to use localStorage data if available for immediate display
-              const savedData = loadSummaryFromLocalStorage();
-              if (savedData && Object.keys(savedData).length > 0) {
-                console.log('Using saved localStorage data for immediate display');
-                // Use a small timeout to ensure the tab is visible first
-                setTimeout(() => {
-                  updateSummaryDisplay(savedData);
-                }, 10);
-              }
-              // Otherwise, if we already have summary data, use it immediately
-              else if (summaryData && Object.keys(summaryData).length > 0) {
-                console.log('Using existing summary data immediately');
-                // Use a small timeout to ensure the tab is visible first
-                setTimeout(() => {
-                  updateSummaryDisplay(summaryData);
-                }, 10);
-              }
-              
-              // Request fresh data after a short delay
-              setTimeout(() => {
-                console.log('Requesting immediate summary generation');
-                parent.postMessage({ pluginMessage: { type: 'get-summary', immediate: true } }, '*');
-              }, 100);
-              
-              // As a final fallback, try Firebase with a delay
-              if (firebaseInitialized && firebaseDb) {
-                setTimeout(() => {
-                  console.log('Requesting Firebase data as final option');
-                  loadSummaryFromFirebase(false);
-                }, 1500);
-              }
-            }
-          }
+          switchToTab(tabId);
         });
       });
       
@@ -1800,9 +1886,20 @@
         parent.postMessage({ pluginMessage: { type: 'sync-from-firebase' } }, '*');
       });
       
-      // Activate the first tab by default
+      // Activate the first tab by default or check URL params for tab selection
       if (tabButtons.length > 0) {
-        tabButtons[0].click();
+        // Check if we should activate a specific tab (e.g., from URL parameters)
+        const urlParams = new URLSearchParams(window.location.search);
+        const tabParam = urlParams.get('tab');
+        
+        if (tabParam && document.querySelector(`.tab-button[data-tab="${tabParam}-tab"]`)) {
+          // We have a valid tab parameter, switch to that tab
+          switchToTab(`${tabParam}-tab`);
+        } else {
+          // Default to first tab
+          const firstTabId = tabButtons[0].getAttribute('data-tab');
+          switchToTab(firstTabId);
+        }
       }
     });
 
