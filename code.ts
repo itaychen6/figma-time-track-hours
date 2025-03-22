@@ -88,6 +88,7 @@ let heartbeatInterval: number;
 let files: { [fileId: string]: any } = {};
 let firebaseInitialized = false;
 let pagesLoaded = false;
+let pendingFirebaseDataRequest = false;
 
 // Plugin initialization
 figma.showUI(__html__, { width: 300, height: 460 });
@@ -521,16 +522,16 @@ function heartbeat() {
 // Save data both locally and to Firebase
 async function saveData() {
   try {
-    // Save to client storage
-    await figma.clientStorage.setAsync('timeTrackingData', files);
-    console.log('Saved data to client storage');
-    lastSaveTime = Date.now();
-    
-    // Check if we should sync with Firebase based on interval
-    const currentTime = Date.now();
-    if (currentTime - lastFirebaseSync > FIREBASE_SYNC_INTERVAL && firebaseInitialized) {
+    // Save to Firebase first (primary storage)
+    if (firebaseInitialized) {
+      console.log('Saving data primarily to Firebase');
       saveDataToFirebase();
     }
+    
+    // Also save to client storage as backup
+    await figma.clientStorage.setAsync('timeTrackingData', files);
+    console.log('Saved data to client storage as backup');
+    lastSaveTime = Date.now();
   } catch (error) {
     console.error('Error saving data:', error);
   }
@@ -576,91 +577,117 @@ async function saveDataToFirebase() {
 // Request data from Firebase
 async function requestFirebaseData() {
   try {
-    console.log('Requesting data from Firebase');
+    console.log('Requesting data from Firebase (primary data source)');
     
     if (!firebaseInitialized) {
       console.warn('Firebase not initialized, sending config first');
       sendFirebaseConfig();
       
+      // Set a flag to indicate we want to fetch data when Firebase initializes
+      pendingFirebaseDataRequest = true;
+      
       // Try again after a short delay
       setTimeout(() => {
         if (firebaseInitialized) {
+          console.log('Firebase now initialized, retrying data request');
           requestFirebaseData();
+        } else {
+          console.warn('Firebase still not initialized after delay, falling back');
+          fallbackToClientStorage();
         }
-      }, 2000);
+      }, 5000);
       return;
     }
     
     // Request data from UI
     figma.ui.postMessage({
       type: 'load-from-firebase',
-      userId: await userId
+      userId: await userId,
+      priority: 'high' // Signal this is a primary data load
     });
   } catch (error) {
     console.error('Error requesting Firebase data:', error);
+    fallbackToClientStorage();
   }
 }
 
 // Load plugin data
 async function loadPluginData() {
   try {
-    console.log('Loading plugin data...');
-    // Try to load data from Figma document storage
+    console.log('Loading plugin data, prioritizing Firebase...');
+    
+    // First check if Firebase is initialized
+    if (firebaseInitialized) {
+      console.log('Firebase initialized, requesting data from Firebase directly');
+      requestFirebaseData();
+      return;
+    }
+    
+    // If Firebase isn't initialized yet, initialize it and request later
+    console.log('Firebase not initialized, sending config and will request data after initialization');
+    sendFirebaseConfig();
+    
+    // We'll only use client storage as a fallback if Firebase fails
+    console.log('Setting up Firebase initialization check interval');
+    const checkInterval = setInterval(() => {
+      if (firebaseInitialized) {
+        clearInterval(checkInterval);
+        console.log('Firebase now initialized, requesting data');
+        requestFirebaseData();
+      }
+    }, 1000);
+    
+    // Set a timeout to fall back to client storage if Firebase doesn't initialize
+    setTimeout(() => {
+      if (!firebaseInitialized) {
+        clearInterval(checkInterval);
+        console.log('Firebase failed to initialize after timeout, falling back to client storage');
+        // Only now try to load from client storage as a fallback
+        fallbackToClientStorage();
+      }
+    }, 10000); // Wait 10 seconds for Firebase before falling back
+  } catch (error) {
+    console.error('Error in loadPluginData:', error);
+    fallbackToClientStorage();
+  }
+}
+
+// Fallback to client storage if Firebase fails
+async function fallbackToClientStorage() {
+  try {
+    console.log('Falling back to client storage');
     const data = await figma.clientStorage.getAsync('timeTrackingData');
     
     if (data && Object.keys(data).length > 0) {
-      console.log('Loaded data from client storage', data);
+      console.log('Loaded data from client storage as fallback', data);
       files = data;
+      sendAllFilesData();
       
-      // Check if we need to request from Firebase based on last sync time
-      const lastSync = await figma.clientStorage.getAsync('lastFirebaseSync') || 0;
-      const currentTime = Date.now();
-      
-      // If it's been more than 5 minutes since last sync, request from Firebase
-      if (currentTime - lastSync > FIREBASE_SYNC_INTERVAL && firebaseInitialized) {
-        console.log('It has been a while since last Firebase sync, requesting updated data...');
-        requestFirebaseData();
-      } else {
-        // Otherwise just send the files data to UI
-        sendAllFilesData();
-        
-        // Also send summary update with the loaded data
-        figma.ui.postMessage({
-          type: 'update-summary',
-          files: files,
-          userId: await userId,
-          immediate: true
-        });
-      }
+      // Also send summary update with the loaded data
+      figma.ui.postMessage({
+        type: 'update-summary',
+        files: files,
+        userId: await userId,
+        immediate: true,
+        source: 'clientStorage' // Flag the source for UI awareness
+      });
     } else {
-      console.log('No data in client storage, requesting from Firebase...');
-      // If no local data, try to request from Firebase if initialized
-      if (firebaseInitialized) {
-        requestFirebaseData();
-      } else {
-        // Otherwise, initialize empty files object
-        files = {};
-        sendAllFilesData();
-        
-        // Also init empty summary
-        figma.ui.postMessage({
-          type: 'update-summary',
-          files: {},
-          userId: await userId,
-          immediate: true
-        });
-      }
-    }
-  } catch (error) {
-    console.error('Error loading plugin data:', error);
-    // On error, try to request from Firebase
-    if (firebaseInitialized) {
-      requestFirebaseData();
-    } else {
-      // Otherwise, initialize empty files object
+      console.log('No data in client storage either, starting fresh');
       files = {};
       sendAllFilesData();
+      
+      // Also init empty summary
+      figma.ui.postMessage({
+        type: 'update-summary',
+        files: {},
+        userId: await userId,
+        immediate: true
+      });
     }
+  } catch (error) {
+    console.error('Error falling back to client storage:', error);
+    files = {};
+    sendAllFilesData();
   }
 }
 

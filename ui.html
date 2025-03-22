@@ -19,7 +19,13 @@
     /* Tabs */
     .tabs {
       display: flex;
-      border-bottom: 1px solid #ddd;
+      border-bottom: 1px solid #ccc;
+      margin-bottom: 16px;
+    }
+    
+    .tab-buttons {
+      display: flex;
+      border-bottom: 1px solid #ccc;
       margin-bottom: 16px;
     }
     
@@ -403,15 +409,25 @@
       50% { opacity: 1; }
       100% { opacity: 0.3; }
     }
+
+    .data-source-indicator {
+      font-size: 11px;
+      color: #888;
+      margin-top: 16px;
+      text-align: center;
+      padding: 4px;
+      background-color: #f5f5f5;
+      border-radius: 4px;
+    }
   </style>
 </head>
 <body>
   <div class="container">
-    <!-- Tabs -->
-    <div class="tabs">
-      <button class="tab-button active" data-tab="tracking-tab">Tracking</button>
-      <button class="tab-button" data-tab="summary-tab">Summary</button>
-      <button class="tab-button" data-tab="settings-tab">Settings</button>
+    <!-- Navigation Tabs -->
+    <div class="tab-buttons">
+      <button class="tab-button active" data-tab="tracking-tab" onclick="handleTabButtonClick('tracking-tab')">Tracking</button>
+      <button class="tab-button" data-tab="summary-tab" onclick="handleTabButtonClick('summary-tab')">Summary</button>
+      <button class="tab-button" data-tab="settings-tab" onclick="handleTabButtonClick('settings-tab')">Settings</button>
     </div>
     
     <!-- Tracking Tab -->
@@ -522,6 +538,7 @@
     let firebaseConnected = false;
     let connectionRef = null;
     let currentSessionId = null;
+    let activelyFetchingFromFirebase = false;
 
     // Initialize Firebase when config is received
     function initializeFirebase(config) {
@@ -659,19 +676,24 @@
             
             // Update in-memory data
             summaryData = data;
+            trackingData = { ...data }; // Clone data for tracking
             lastSavedTimestamp = Date.now();
+            
+            // Always use this data for the UI as it's the most authoritative
+            if (document.getElementById('summary-tab').classList.contains('active')) {
+              updateSummaryDisplay(data);
+            }
             
             // Try to store a backup in localStorage
             try {
               localStorage.setItem('figmaTimeTrackSummary_backup', JSON.stringify(summaryData));
+              localStorage.setItem('figmaTimeTrackSummaryTimestamp', Date.now().toString());
             } catch (e) {
               console.warn('Could not save Firebase data to localStorage backup:', e);
             }
             
-            // Update UI if on summary tab
-            if (document.getElementById('summary-tab').classList.contains('active')) {
-              updateSummaryDisplay(data);
-            }
+            // Update UI with connection status
+            updateFirebaseStatus('Data updated from Firebase');
           }
         }, (error) => {
           console.error('Firebase real-time listener error:', error);
@@ -1669,10 +1691,21 @@
       } 
       
       else if (message.type === 'load-from-firebase') {
-        console.log('Loading data from Firebase');
+        console.log('Received request to load data from Firebase for user:', message.userId);
         
-        // Load data from Firebase
-        loadFromFirebase(message.userId);
+        // Set flag to indicate we're actively fetching from Firebase
+        activelyFetchingFromFirebase = true;
+        
+        if (message.userId) {
+          // If high priority request, clear any cached data first
+          if (message.priority === 'high') {
+            console.log('High priority request, clearing cached data');
+            summaryData = null;
+            trackingData = {};
+          }
+          
+          loadFromFirebase(message.userId);
+        }
       }
       
       // Handle the save-to-firebase-before-close message
@@ -2348,6 +2381,7 @@
     function loadSummaryFromFirebase() {
       if (!firebaseInitialized || !firebaseDb || !userId) {
         console.warn('Firebase not initialized, using backup data');
+        activelyFetchingFromFirebase = false;
         return useBackupData();
       }
       
@@ -2355,9 +2389,13 @@
         console.log('Loading summary data from Firebase');
         document.getElementById('summary-loading').textContent = 'Loading from Firebase...';
         
+        // Set flag to indicate we're actively fetching from Firebase
+        activelyFetchingFromFirebase = true;
+        
         // Set a timeout for the Firebase operation
         let timeoutId = setTimeout(() => {
           console.warn('Firebase load timed out, using backup data');
+          activelyFetchingFromFirebase = false;
           useBackupData();
         }, 5000);
         
@@ -2424,6 +2462,7 @@
     // Use backup data from memory, localStorage or empty state
     function useBackupData() {
       console.log('Using backup data sources');
+      activelyFetchingFromFirebase = false;
       
       // First try in-memory data
       if (summaryData && Object.keys(summaryData).length > 0) {
@@ -2931,6 +2970,154 @@
         }
       }
     });
+
+    // Function to handle tab button clicks
+    function handleTabButtonClick(tabId) {
+      // Hide all tab content
+      document.querySelectorAll('.tab-content').forEach(tab => {
+        tab.classList.remove('active');
+      });
+      
+      // Remove active class from all tab buttons
+      document.querySelectorAll('.tab-button').forEach(button => {
+        button.classList.remove('active');
+      });
+      
+      // Show selected tab content and mark button as active
+      document.getElementById(tabId).classList.add('active');
+      document.querySelector(`[data-tab="${tabId}"]`).classList.add('active');
+      
+      // If summary tab is selected, immediately start loading data from Firebase
+      if (tabId === 'summary-tab') {
+        console.log('Summary tab selected, loading summary from Firebase');
+        document.getElementById('summary-container').innerHTML = '<p id="summary-loading">Loading data from Firebase...</p>';
+        
+        // Always load fresh data from Firebase for summary tab
+        if (firebaseInitialized && firebaseDb && userId) {
+          loadSummaryFromFirebase();
+        } else {
+          // If Firebase not ready, try to use cached data but continue to try loading
+          if (summaryData) {
+            console.log('Using cached data while waiting for Firebase');
+            updateSummaryDisplay(summaryData);
+          }
+          
+          // Try initializing Firebase
+          parent.postMessage({ pluginMessage: { type: 'ui-loaded' } }, '*');
+        }
+      }
+    }
+
+    // Update the summary display
+    function updateSummaryDisplay(data) {
+      try {
+        console.log('Updating summary display with data source:', 
+                   activelyFetchingFromFirebase ? 'Firebase (active fetch)' : 
+                   (summaryData === data ? 'cached data' : 'new data'));
+        
+        // Save data reference for future use
+        summaryData = data;
+        
+        let summaryHtml = '';
+        let totalTimeInSeconds = 0;
+        
+        if (!data || Object.keys(data).length === 0) {
+          summaryHtml = '<p>No tracking data available yet. Start working on a file to begin tracking time.</p>';
+          document.getElementById('summary-container').innerHTML = summaryHtml;
+          return;
+        }
+        
+        console.log('Processing summary data with', Object.keys(data).length, 'files');
+        
+        // Create array of files for sorting
+        const fileEntries = [];
+        for (const fileId in data) {
+          if (data.hasOwnProperty(fileId)) {
+            const fileData = data[fileId];
+            
+            // Skip if file data is invalid
+            if (!fileData) continue;
+            
+            // Calculate time value (handle different data formats)
+            let fileTimeInSeconds = 0;
+            
+            if (typeof fileData.totalSeconds === 'number') {
+              fileTimeInSeconds = fileData.totalSeconds;
+            } else if (typeof fileData.totalTime === 'number') {
+              fileTimeInSeconds = Math.floor(fileData.totalTime / 1000);
+            } else if (fileData.time && typeof fileData.time === 'number') {
+              fileTimeInSeconds = Math.floor(fileData.time / 1000);
+            }
+            
+            if (fileTimeInSeconds > 0) {
+              totalTimeInSeconds += fileTimeInSeconds;
+              
+              // Format the file name (remove path and extension)
+              let fileName = fileData.name || 'Unknown File';
+              if (fileName.includes('/')) {
+                fileName = fileName.split('/').pop();
+              }
+              if (fileName.includes('.')) {
+                fileName = fileName.split('.')[0];
+              }
+              
+              fileEntries.push({
+                id: fileId,
+                name: fileName,
+                timeInSeconds: fileTimeInSeconds
+              });
+            }
+          }
+        }
+        
+        // Sort files by time spent (most to least)
+        fileEntries.sort((a, b) => b.timeInSeconds - a.timeInSeconds);
+        
+        // Build HTML for file list
+        summaryHtml += '<div class="summary-files">';
+        fileEntries.forEach(file => {
+          const timeFormatted = formatTime(file.timeInSeconds);
+          summaryHtml += `
+            <div class="summary-file-item">
+              <div class="summary-file-name">${file.name}</div>
+              <div class="summary-file-time">${timeFormatted}</div>
+            </div>
+          `;
+        });
+        summaryHtml += '</div>';
+        
+        // Add total time
+        summaryHtml += `
+          <div class="summary-total">
+            <div class="summary-total-label">Total Time</div>
+            <div class="summary-total-time">${formatTime(totalTimeInSeconds)}</div>
+          </div>
+          <div class="summary-actions">
+            <button onclick="requestSummaryRefresh()">Refresh Data</button>
+          </div>
+        `;
+        
+        document.getElementById('summary-container').innerHTML = summaryHtml;
+        
+        // Update the data source indicator
+        if (document.getElementById('data-source-indicator')) {
+          document.getElementById('data-source-indicator').textContent = 
+            activelyFetchingFromFirebase ? 'Data source: Firebase' : 'Data source: Cache';
+        } else {
+          // Add a data source indicator if it doesn't exist
+          const indicator = document.createElement('div');
+          indicator.id = 'data-source-indicator';
+          indicator.className = 'data-source-indicator';
+          indicator.textContent = activelyFetchingFromFirebase ? 'Data source: Firebase' : 'Data source: Cache';
+          document.getElementById('summary-container').appendChild(indicator);
+        }
+      } catch (error) {
+        console.error('Error updating summary display:', error);
+        document.getElementById('summary-container').innerHTML = 
+          `<p class="error">Error displaying summary: ${error.message}</p>
+           <button onclick="requestSummaryRefresh()">Retry</button>`;
+      }
+    }
 </script>
 </body>
 </html>
