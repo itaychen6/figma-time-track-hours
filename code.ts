@@ -92,6 +92,13 @@ let pagesLoaded = false;
 // Plugin initialization
 figma.showUI(__html__, { width: 300, height: 460 });
 
+// Register the plugin close handler
+figma.on('close', () => {
+  console.log('Plugin closing, saving data to Firebase');
+  // Save data synchronously before closing
+  saveDataToFirebaseOnClose();
+});
+
 // First, load all pages before registering event handlers
 figma.loadAllPagesAsync().then(() => {
   pagesLoaded = true;
@@ -728,4 +735,41 @@ function sendAllFilesData() {
     activeFileId: activeFileId,
     activePage: activePage
   });
+}
+
+// Save data to Firebase on plugin close (synchronous version)
+function saveDataToFirebaseOnClose() {
+  try {
+    console.log('Saving final data to Firebase before plugin closes');
+    
+    // Make sure we have data to save
+    if (!files || Object.keys(files).length === 0) {
+      console.log('No data to save to Firebase on close');
+      return;
+    }
+    
+    // Before closing, make one last save to the client storage
+    figma.clientStorage.setAsync('timeTrackingData', files).catch(err => {
+      console.error('Error saving to client storage on close:', err);
+    });
+    
+    // Also make sure any active tracking is stopped and saved
+    if (isTracking) {
+      stopTracking();
+    }
+    
+    // Send a special message to UI to save to Firebase immediately
+    figma.ui.postMessage({
+      type: 'save-to-firebase-before-close',
+      files: files,
+      userId: userId,
+      timestamp: Date.now()
+    });
+    
+    // Give the UI a moment to process the save
+    // This doesn't actually pause since figma.close is not awaitable,
+    // but at least we've sent the message to the UI which will attempt the save
+  } catch (error) {
+    console.error('Error in saveDataToFirebaseOnClose:', error);
+  }
 }

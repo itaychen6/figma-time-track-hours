@@ -521,6 +521,7 @@
     let inMemoryCache = {}; // Fallback cache when localStorage fails
     let firebaseConnected = false;
     let connectionRef = null;
+    let currentSessionId = null;
 
     // Initialize Firebase when config is received
     function initializeFirebase(config) {
@@ -565,6 +566,9 @@
               console.warn('Could not save user ID to localStorage:', e);
             }
             
+            // Record this session in Firebase
+            recordSessionStart();
+            
             // Notify plugin that Firebase is initialized
             parent.postMessage({ pluginMessage: { type: 'firebase-init-complete', userId: userId } }, '*');
             
@@ -593,6 +597,44 @@
         console.error('Error initializing Firebase:', error);
         handleFirebaseError(error);
       }
+    }
+    
+    // Record the start of a new plugin session
+    function recordSessionStart() {
+      if (!firebaseDb || !userId) return;
+      
+      try {
+        const sessionId = generateUniqueId();
+        const timestamp = Date.now();
+        
+        // Store the session start in Firebase
+        firebaseDb.ref(`sessions/${userId}/${sessionId}`).set({
+          startTime: timestamp,
+          userAgent: navigator.userAgent,
+          status: 'active'
+        }).then(() => {
+          console.log('Recorded session start in Firebase');
+          
+          // Store the session ID locally
+          currentSessionId = sessionId;
+          localStorage.setItem('figmaTimeTrackSessionId', sessionId);
+          
+          // Update the user's metadata
+          return firebaseDb.ref(`metadata/${userId}`).update({
+            lastSessionStart: timestamp,
+            currentSessionId: sessionId
+          });
+        }).catch(error => {
+          console.error('Error recording session start:', error);
+        });
+      } catch (error) {
+        console.error('Error in recordSessionStart:', error);
+      }
+    }
+    
+    // Generate a unique ID for sessions
+    function generateUniqueId() {
+      return Date.now().toString(36) + Math.random().toString(36).substr(2, 5);
     }
     
     // Set up real-time listener for changes to Firebase data
@@ -1632,6 +1674,51 @@
         // Load data from Firebase
         loadFromFirebase(message.userId);
       }
+      
+      // Handle the save-to-firebase-before-close message
+      else if (message.type === 'save-to-firebase-before-close') {
+        console.log('Received request to save data before plugin close');
+        
+        if (message.files && message.userId) {
+          // Save the data to localStorage as a backup immediately
+          try {
+            localStorage.setItem('figmaTimeTrackSummary_backup', JSON.stringify(message.files));
+            localStorage.setItem('figmaTimeTrackSummaryTimestamp', Date.now().toString());
+            console.log('Saved backup of data before plugin close');
+          } catch (e) {
+            console.warn('Failed to save backup before close:', e);
+          }
+          
+          // If Firebase is initialized, save there too
+          if (firebaseInitialized && firebaseDb) {
+            try {
+              console.log('Saving to Firebase before plugin close');
+              
+              // Use set instead of update to ensure all data is written
+              firebaseDb.ref('timeData/' + message.userId).set(message.files)
+                .then(() => {
+                  console.log('Successfully saved to Firebase before plugin close');
+                  // Update the last sync timestamp
+                  return firebaseDb.ref('lastSync/' + message.userId).set(message.timestamp);
+                })
+                .catch(error => {
+                  console.error('Error saving to Firebase before close:', error);
+                });
+                
+              // Also flag this data as the latest valid data
+              firebaseDb.ref('metadata/' + message.userId).update({
+                lastSaveBeforeClose: message.timestamp,
+                dataVersion: 2, // Increment data version to mark as new format
+                hasValidData: true
+              }).catch(err => console.warn('Error updating metadata:', err));
+            } catch (error) {
+              console.error('Error in Firebase save before close:', error);
+            }
+          } else {
+            console.warn('Firebase not initialized, could not save before close');
+          }
+        }
+      }
     };
 
     // Reset the timer display
@@ -2274,8 +2361,19 @@
           useBackupData();
         }, 5000);
         
-        // Get data from Firebase
-        firebaseDb.ref('timeData/' + userId).once('value')
+        // First check the metadata to see if we have valid data
+        firebaseDb.ref('metadata/' + userId).once('value')
+          .then(metaSnapshot => {
+            const metadata = metaSnapshot.val() || {};
+            if (metadata.hasValidData) {
+              console.log('Metadata indicates we have valid data, loading data...');
+              return firebaseDb.ref('timeData/' + userId).once('value');
+            } else {
+              console.warn('No valid data flag in metadata, may need to check backup');
+              // Still try to load, but with caution
+              return firebaseDb.ref('timeData/' + userId).once('value');
+            }
+          })
           .then(snapshot => {
             // Clear the timeout since we got a response
             clearTimeout(timeoutId);
@@ -2283,19 +2381,27 @@
             const data = snapshot.val();
             console.log('Data loaded from Firebase:', data ? 'has data' : 'empty');
             
-            if (data) {
+            if (data && Object.keys(data).length > 0) {
               // Store in memory
               summaryData = data;
               
               // Save backup to localStorage
               try {
                 localStorage.setItem('figmaTimeTrackSummary_backup', JSON.stringify(data));
+                localStorage.setItem('figmaTimeTrackUserId', userId);
+                localStorage.setItem('figmaTimeTrackSummaryTimestamp', Date.now().toString());
               } catch (e) {
                 console.warn('Could not save Firebase data to localStorage backup:', e);
               }
               
               // Update the display
               updateSummaryDisplay(data);
+              
+              // Update the metadata to indicate we have valid data
+              firebaseDb.ref('metadata/' + userId).update({
+                lastSuccessfulLoad: Date.now(),
+                hasValidData: true
+              }).catch(err => console.warn('Error updating metadata after load:', err));
             } else {
               console.log('No data in Firebase, checking backup');
               useBackupData();
@@ -2718,6 +2824,12 @@
             .then(() => {
               console.log('Auto-save to Firebase successful');
               lastAutoSaveTimestamp = now;
+              
+              // Also save metadata about this auto-save
+              firebaseDb.ref('metadata/' + userId).update({
+                lastAutoSave: now,
+                hasValidData: true
+              }).catch(err => console.warn('Error updating auto-save metadata:', err));
             })
             .catch(error => {
               console.error('Auto-save to Firebase failed:', error);
@@ -2801,6 +2913,24 @@
         indicator.title = 'Firebase disconnected';
       }
     }
+
+    // Record session end when page is unloaded
+    window.addEventListener('beforeunload', function() {
+      if (firebaseDb && userId && currentSessionId) {
+        try {
+          // Make a synchronous request to mark session as ended
+          const xhr = new XMLHttpRequest();
+          const sessionEndPoint = `${firebaseConfig.databaseURL}/sessions/${userId}/${currentSessionId}/status.json`;
+          xhr.open('PUT', sessionEndPoint, false); // false makes it synchronous
+          xhr.setRequestHeader('Content-Type', 'application/json');
+          xhr.send(JSON.stringify('ended'));
+          
+          console.log('Recorded session end in Firebase');
+        } catch (e) {
+          console.warn('Failed to record session end:', e);
+        }
+      }
+    });
 </script>
 </body>
 </html>
