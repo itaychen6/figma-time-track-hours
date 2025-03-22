@@ -376,6 +376,33 @@
       font-size: 12px;
       padding: 6px 12px;
     }
+    
+    .firebase-indicator {
+      display: inline-block;
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      margin-left: 6px;
+    }
+    
+    .firebase-indicator.connected {
+      background-color: #34c759;
+    }
+    
+    .firebase-indicator.connecting {
+      background-color: #ffcc00;
+      animation: pulse 1.5s infinite;
+    }
+    
+    .firebase-indicator.disconnected {
+      background-color: #ff3b30;
+    }
+    
+    @keyframes pulse {
+      0% { opacity: 0.3; }
+      50% { opacity: 1; }
+      100% { opacity: 0.3; }
+    }
   </style>
 </head>
 <body>
@@ -443,6 +470,7 @@
           <div>
             <button id="sync-to-firebase">Save to Firebase</button>
             <button id="sync-from-firebase">Load from Firebase</button>
+            <span id="firebase-connection-status" class="firebase-indicator disconnected" title="Firebase disconnected"></span>
           </div>
         </div>
         
@@ -491,6 +519,8 @@
     let lastSavedTimestamp = 0;
     let trackingData = {};
     let inMemoryCache = {}; // Fallback cache when localStorage fails
+    let firebaseConnected = false;
+    let connectionRef = null;
 
     // Initialize Firebase when config is received
     function initializeFirebase(config) {
@@ -508,6 +538,19 @@
         firebaseDb = firebase.database();
         firebaseInitialized = true;
         
+        // Monitor Firebase connection status
+        setupFirebaseConnectionMonitor();
+        
+        // Enable Firebase persistence if possible
+        try {
+          firebase.database().goOnline();
+          updateFirebaseConnectionStatus('connecting');
+          console.log('Firebase connection online');
+        } catch (persistError) {
+          console.warn('Could not enable Firebase persistence:', persistError);
+          updateFirebaseConnectionStatus('disconnected');
+        }
+        
         // Set up anonymous authentication
         firebase.auth().onAuthStateChanged((user) => {
           if (user) {
@@ -515,8 +558,18 @@
             // User is signed in
             userId = user.uid;
             
+            // Store user ID to localStorage for persistence across restarts
+            try {
+              localStorage.setItem('figmaTimeTrackUserId', userId);
+            } catch (e) {
+              console.warn('Could not save user ID to localStorage:', e);
+            }
+            
             // Notify plugin that Firebase is initialized
-            parent.postMessage({ pluginMessage: { type: 'firebase-init-complete' } }, '*');
+            parent.postMessage({ pluginMessage: { type: 'firebase-init-complete', userId: userId } }, '*');
+            
+            // Set up real-time listener for tracking data
+            setupFirebaseDataListener();
             
             // Immediately check if we need to start a new day's tracking
             checkAndHandleDayChange();
@@ -542,9 +595,58 @@
       }
     }
     
+    // Set up real-time listener for changes to Firebase data
+    function setupFirebaseDataListener() {
+      if (!firebaseDb || !userId) {
+        console.warn('Firebase not initialized, cannot set up data listener');
+        return;
+      }
+      
+      try {
+        console.log('Setting up Firebase real-time data listener');
+        const dataRef = firebaseDb.ref('timeData/' + userId);
+        
+        // Detach any existing listeners
+        dataRef.off();
+        
+        // Listen for value changes
+        dataRef.on('value', (snapshot) => {
+          const data = snapshot.val();
+          if (data) {
+            console.log('Real-time update from Firebase received');
+            
+            // Update in-memory data
+            summaryData = data;
+            lastSavedTimestamp = Date.now();
+            
+            // Try to store a backup in localStorage
+            try {
+              localStorage.setItem('figmaTimeTrackSummary_backup', JSON.stringify(summaryData));
+            } catch (e) {
+              console.warn('Could not save Firebase data to localStorage backup:', e);
+            }
+            
+            // Update UI if on summary tab
+            if (document.getElementById('summary-tab').classList.contains('active')) {
+              updateSummaryDisplay(data);
+            }
+          }
+        }, (error) => {
+          console.error('Firebase real-time listener error:', error);
+          handleFirebaseError(error);
+        });
+        
+      } catch (error) {
+        console.error('Error setting up Firebase data listener:', error);
+      }
+    }
+    
     // Handle Firebase errors gracefully
     function handleFirebaseError(error) {
       console.error('Firebase error:', error);
+      
+      // Update connection status
+      updateFirebaseConnectionStatus('disconnected');
       
       // Notify the plugin about the error
       parent.postMessage({ 
@@ -1423,18 +1525,18 @@
           console.log('Updated tracking data for file:', trackingData[fileId].name, 
                       'total time:', formatTime(trackingData[fileId].totalSeconds));
           
-          // Save to localStorage for persistence
+          // First, try to save to Firebase (preferred storage)
+          if (firebaseInitialized && firebaseDb && userId) {
+            saveRecentUpdateToFirebase(fileId, trackingData[fileId]);
+          }
+          
+          // Also save to localStorage as backup
           const saveSuccess = saveSummaryToLocalStorage(trackingData);
           
           // If localStorage fails, keep data in memory
           if (!saveSuccess) {
             console.log('Saving to in-memory cache due to localStorage failure');
             inMemoryCache = { ...trackingData };
-            
-            // Show storage warning if we have a lot of files
-            if (Object.keys(trackingData).length > 15) {
-              showStorageWarning();
-            }
           }
           
           // Update summary if on summary tab
@@ -2158,108 +2260,109 @@
     // Load summary data from Firebase with better error handling and timeout
     function loadSummaryFromFirebase() {
       if (!firebaseInitialized || !firebaseDb || !userId) {
-        console.log('Firebase not ready, using local data if available');
-        
-        // Try to use stored in-memory data
-        if (summaryData) {
-          updateSummaryDisplay(summaryData);
-        }
-        return;
+        console.warn('Firebase not initialized, using backup data');
+        return useBackupData();
       }
       
       try {
-        console.log('Loading summary data from Firebase for user:', userId);
+        console.log('Loading summary data from Firebase');
+        document.getElementById('summary-loading').textContent = 'Loading from Firebase...';
         
-        // Show loading message
-        document.getElementById('summary-loading').textContent = 'Loading data from Firebase...';
+        // Set a timeout for the Firebase operation
+        let timeoutId = setTimeout(() => {
+          console.warn('Firebase load timed out, using backup data');
+          useBackupData();
+        }, 5000);
         
-        // Set up a timeout for Firebase operations
-        const timeoutPromise = new Promise((_, reject) => {
-          setTimeout(() => reject(new Error('Firebase timeout')), 5000);
-        });
-        
-        // Get data from Firebase with timeout
-        Promise.race([
-          timeoutPromise,
-          firebaseDb.ref('timeData/' + userId).once('value')
-        ])
+        // Get data from Firebase
+        firebaseDb.ref('timeData/' + userId).once('value')
           .then(snapshot => {
-            if (!snapshot || !snapshot.val) {
-              throw new Error('Invalid Firebase response');
-            }
+            // Clear the timeout since we got a response
+            clearTimeout(timeoutId);
             
             const data = snapshot.val();
-            console.log('Firebase data loaded successfully:', data ? 'has data' : 'empty');
+            console.log('Data loaded from Firebase:', data ? 'has data' : 'empty');
             
             if (data) {
-              // Store the data for persistence
+              // Store in memory
               summaryData = data;
-              lastSavedTimestamp = Date.now();
               
-              // Save to localStorage for persistence
+              // Save backup to localStorage
               try {
-                localStorage.setItem('figmaTimeTrackSummary', JSON.stringify(summaryData));
-                localStorage.setItem('figmaTimeTrackSummaryTimestamp', lastSavedTimestamp.toString());
-                console.log('Firebase data saved to localStorage successfully');
-              } catch (storageError) {
-                console.error('Error saving Firebase data to localStorage:', storageError);
+                localStorage.setItem('figmaTimeTrackSummary_backup', JSON.stringify(data));
+              } catch (e) {
+                console.warn('Could not save Firebase data to localStorage backup:', e);
               }
               
               // Update the display
               updateSummaryDisplay(data);
             } else {
-              console.log('No data in Firebase');
-              if (summaryData) {
-                updateSummaryDisplay(summaryData);
-              } else {
-                document.getElementById('summary-container').innerHTML = '<p>No tracking data available</p>';
-              }
+              console.log('No data in Firebase, checking backup');
+              useBackupData();
             }
           })
           .catch(error => {
-            console.error('Error loading from Firebase:', error);
+            // Clear the timeout since we got an error response
+            clearTimeout(timeoutId);
             
-            // On error, use stored data if available
-            if (summaryData) {
-              console.log('Using stored data due to Firebase error');
-              updateSummaryDisplay(summaryData);
-            } else {
-              // Try localStorage as a last resort
-              try {
-                const savedData = localStorage.getItem('figmaTimeTrackSummary');
-                if (savedData) {
-                  console.log('Using localStorage data after Firebase error');
-                  summaryData = JSON.parse(savedData);
-                  updateSummaryDisplay(summaryData);
-                } else if (Object.keys(inMemoryCache).length > 0) {
-                  // Use in-memory cache if available
-                  console.log('Using in-memory cache after Firebase error');
-                  updateSummaryDisplay(inMemoryCache);
-                } else {
-                  document.getElementById('summary-container').innerHTML = 
-                    `<p class="error">Error loading data: ${error.message}</p>
-                     <button onclick="requestSummaryRefresh()">Retry</button>`;
-                }
-              } catch (storageError) {
-                console.error('Error loading from localStorage:', storageError);
-                document.getElementById('summary-container').innerHTML = 
-                  `<p class="error">Error loading data: ${error.message}</p>
-                   <button onclick="requestSummaryRefresh()">Retry</button>`;
-              }
-            }
+            console.error('Error loading from Firebase:', error);
+            handleFirebaseError(error);
+            useBackupData();
           });
       } catch (error) {
         console.error('Error in loadSummaryFromFirebase:', error);
-        
-        // Use stored data on error
-        if (summaryData) {
-          updateSummaryDisplay(summaryData);
-        } else {
-          document.getElementById('summary-container').innerHTML = 
-            `<p class="error">Error: ${error.message}</p>
-             <button onclick="requestSummaryRefresh()">Retry</button>`;
-        }
+        useBackupData();
       }
+    }
+
+    // Use backup data from memory, localStorage or empty state
+    function useBackupData() {
+      console.log('Using backup data sources');
+      
+      // First try in-memory data
+      if (summaryData && Object.keys(summaryData).length > 0) {
+        console.log('Using in-memory data');
+        updateSummaryDisplay(summaryData);
+        return true;
+      }
+      
+      // Then try in-memory cache
+      if (inMemoryCache && Object.keys(inMemoryCache).length > 0) {
+        console.log('Using in-memory cache');
+        updateSummaryDisplay(inMemoryCache);
+        return true;
+      }
+      
+      // Then try Firebase backup in localStorage
+      try {
+        const firebaseBackup = localStorage.getItem('figmaTimeTrackSummary_backup');
+        if (firebaseBackup) {
+          const parsedBackup = JSON.parse(firebaseBackup);
+          console.log('Using Firebase backup from localStorage');
+          summaryData = parsedBackup;
+          updateSummaryDisplay(parsedBackup);
+          return true;
+        }
+      } catch (e) {
+        console.warn('Error loading Firebase backup from localStorage:', e);
+      }
+      
+      // Then try chunked/regular localStorage data
+      const localData = loadSummaryFromLocalStorage();
+      if (localData && Object.keys(localData).length > 0) {
+        console.log('Using localStorage data');
+        summaryData = localData;
+        updateSummaryDisplay(localData);
+        return true;
+      }
+      
+      // No data found
+      console.log('No backup data found');
+      document.getElementById('summary-container').innerHTML = 
+        '<p class="no-data">No tracking data available</p>' +
+        '<button class="summary-refresh-button" onclick="requestSummaryRefresh()">Refresh</button>';
+      
+      return false;
     }
 
     // Save data to Firebase
@@ -2560,6 +2663,142 @@
         alert('Local storage has been cleared successfully.');
       } catch (error) {
         console.error('Error clearing localStorage:', error);
+      }
+    }
+
+    // Save just the most recent update to Firebase (more efficient)
+    function saveRecentUpdateToFirebase(fileId, fileData) {
+      if (!firebaseInitialized || !firebaseDb || !userId) {
+        console.warn('Firebase not ready, cannot save recent update');
+        return false;
+      }
+      
+      try {
+        console.log('Saving update for file to Firebase:', fileData.name);
+        
+        // Get the reference to just this file's data
+        const fileRef = firebaseDb.ref('timeData/' + userId + '/' + fileId);
+        
+        // Set the data for this file
+        fileRef.update(fileData)
+          .then(() => {
+            console.log('File update saved to Firebase successfully');
+            updateFirebaseStatus('Data synced to Firebase');
+            
+            // Also update the last sync timestamp
+            firebaseDb.ref('lastSync/' + userId).set(Date.now());
+          })
+          .catch((error) => {
+            console.error('Error saving file update to Firebase:', error);
+            handleFirebaseError(error);
+            return false;
+          });
+          
+        return true;
+      } catch (error) {
+        console.error('Error in saveRecentUpdateToFirebase:', error);
+        return false;
+      }
+    }
+
+    // Auto-save to Firebase every few minutes if there are changes
+    let lastAutoSaveTimestamp = 0;
+    setInterval(() => {
+      // Only auto-save if we have Firebase initialized and data has changed
+      if (firebaseInitialized && firebaseDb && userId && trackingData && Object.keys(trackingData).length > 0) {
+        const now = Date.now();
+        
+        // Check if it's been at least 2 minutes since last auto-save
+        if (now - lastAutoSaveTimestamp > 2 * 60 * 1000) {
+          console.log('Auto-saving data to Firebase');
+          
+          // Save all tracking data to Firebase
+          const timeDataRef = firebaseDb.ref('timeData/' + userId);
+          timeDataRef.update(trackingData)
+            .then(() => {
+              console.log('Auto-save to Firebase successful');
+              lastAutoSaveTimestamp = now;
+            })
+            .catch(error => {
+              console.error('Auto-save to Firebase failed:', error);
+            });
+        }
+      }
+    }, 60 * 1000); // Check every minute, but only save every 2+ minutes
+
+    // Monitor Firebase connection status
+    function setupFirebaseConnectionMonitor() {
+      if (!firebaseDb) return;
+      
+      try {
+        // Get the connection reference
+        connectionRef = firebaseDb.ref('.info/connected');
+        
+        // Listen for connection changes
+        connectionRef.on('value', (snap) => {
+          firebaseConnected = snap.val() === true;
+          
+          if (firebaseConnected) {
+            console.log('Firebase connection established');
+            updateFirebaseConnectionStatus('connected');
+          } else {
+            console.log('Firebase disconnected');
+            updateFirebaseConnectionStatus('disconnected');
+          }
+        });
+        
+        // Set up a heartbeat to keep connection alive
+        setupFirebaseHeartbeat();
+        
+      } catch (error) {
+        console.error('Error setting up connection monitor:', error);
+        updateFirebaseConnectionStatus('disconnected');
+      }
+    }
+    
+    // Set up a heartbeat to keep Firebase connection alive
+    function setupFirebaseHeartbeat() {
+      if (!firebaseDb || !userId) return;
+      
+      try {
+        // Create a heartbeat reference
+        const heartbeatRef = firebaseDb.ref('heartbeats/' + userId);
+        
+        // Send a heartbeat every minute
+        setInterval(() => {
+          if (firebaseConnected && firebaseDb) {
+            heartbeatRef.set({
+              timestamp: firebase.database.ServerValue.TIMESTAMP,
+              client: 'figma-plugin'
+            }).catch(error => {
+              console.warn('Heartbeat error:', error);
+            });
+          }
+        }, 60 * 1000); // Every minute
+        
+      } catch (error) {
+        console.error('Error setting up heartbeat:', error);
+      }
+    }
+    
+    // Update Firebase connection status indicator
+    function updateFirebaseConnectionStatus(status) {
+      const indicator = document.getElementById('firebase-connection-status');
+      if (!indicator) return;
+      
+      // Remove all classes first
+      indicator.classList.remove('connected', 'connecting', 'disconnected');
+      
+      // Add appropriate class
+      indicator.classList.add(status);
+      
+      // Update tooltip
+      if (status === 'connected') {
+        indicator.title = 'Firebase connected';
+      } else if (status === 'connecting') {
+        indicator.title = 'Connecting to Firebase...';
+      } else {
+        indicator.title = 'Firebase disconnected';
       }
     }
 </script>

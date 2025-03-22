@@ -48,7 +48,7 @@ interface RequestFilesDataMessage { type: 'request-files-data'; }
 interface GetSummaryMessage { type: 'get-summary'; immediate?: boolean; }
 interface SyncToFirebaseMessage { type: 'sync-to-firebase'; }
 interface SyncFromFirebaseMessage { type: 'sync-from-firebase'; }
-interface FirebaseInitCompleteMessage { type: 'firebase-init-complete'; }
+interface FirebaseInitCompleteMessage { type: 'firebase-init-complete'; userId?: string; }
 interface FirebaseDataLoadedMessage { type: 'firebase-data-loaded'; data: any; }
 interface FirebaseErrorMessage { type: 'firebase-error'; error: string; }
 interface UiLoadedMessage { type: 'ui-loaded'; }
@@ -203,8 +203,27 @@ figma.ui.onmessage = async (message: any) => {
   }
   
   else if (pluginMessage.type === 'ui-loaded') {
-    console.log('UI reported as loaded, initializing plugin...');
-    initializePlugin();
+    console.log('UI has loaded');
+    
+    // Send current tracking status
+    updateTrackingStatus();
+    
+    // Send Firebase config to UI for initialization
+    sendFirebaseConfig();
+    
+    // Notify UI of current file info
+    if (pagesLoaded) {
+      const currentFileId = figma.currentPage.parent.id;
+      handleFileChange(
+        currentFileId,
+        figma.currentPage.id,
+        (figma.currentPage.parent as any).name,
+        figma.currentPage.name
+      );
+    }
+    
+    // Send all files data to UI
+    sendAllFilesData();
   }
 };
 
@@ -268,12 +287,33 @@ function initializePlugin() {
   }, PLUGIN_REACTIVATION_DELAY);
 }
 
-// Send Firebase configuration to UI
-function sendFirebaseConfig() {
-  figma.ui.postMessage({
-    type: 'firebase-config',
-    config: firebaseConfig
-  });
+// Initialize the Firebase database connection
+async function sendFirebaseConfig() {
+  console.log('Sending Firebase config to UI');
+  try {
+    figma.ui.postMessage({
+      type: 'firebase-config',
+      config: firebaseConfig,
+      userId: await userId
+    });
+    
+    // Set up automatic Firebase sync
+    if (!saveInterval) {
+      saveInterval = setInterval(() => {
+        saveData();
+        
+        // Check if it's time to sync with Firebase
+        const now = Date.now();
+        if (now - lastFirebaseSync > FIREBASE_SYNC_INTERVAL) {
+          console.log('Auto-syncing with Firebase');
+          saveDataToFirebase();
+          lastFirebaseSync = now;
+        }
+      }, SAVE_INTERVAL);
+    }
+  } catch (error) {
+    console.error('Error sending Firebase config:', error);
+  }
 }
 
 // Handle user activity
@@ -491,35 +531,67 @@ async function saveData() {
 
 // Save data to Firebase
 async function saveDataToFirebase() {
-  console.log('Saving data to Firebase...');
-  const currentTime = Date.now();
-  
-  // Send files data to UI to save to Firebase
-  figma.ui.postMessage({
-    type: 'save-to-firebase',
-    files: files,
-    userId: await userId,
-    timestamp: currentTime
-  });
-  
-  // Update the last Firebase sync time
-  lastFirebaseSync = currentTime;
-  await figma.clientStorage.setAsync('lastFirebaseSync', currentTime);
+  try {
+    console.log('Saving data to Firebase');
+    
+    if (!firebaseInitialized) {
+      console.warn('Firebase not initialized, cannot save');
+      // Re-send Firebase config to try to initialize
+      sendFirebaseConfig();
+      return;
+    }
+    
+    // Check if we have non-empty data to save
+    if (!files || Object.keys(files).length === 0) {
+      console.log('No data to save to Firebase');
+      figma.ui.postMessage({
+        type: 'firebase-status',
+        status: 'No data to save'
+      });
+      return;
+    }
+    
+    // Send data to UI for saving to Firebase
+    figma.ui.postMessage({
+      type: 'save-to-firebase',
+      files: files,
+      userId: await userId,
+      timestamp: Date.now()
+    });
+    
+    // Update last sync time
+    lastFirebaseSync = Date.now();
+  } catch (error) {
+    console.error('Error saving to Firebase:', error);
+  }
 }
 
 // Request data from Firebase
 async function requestFirebaseData() {
-  console.log('Requesting data from Firebase...');
-  // Send request to UI to fetch data from Firebase
-  figma.ui.postMessage({
-    type: 'request-firebase-data',
-    userId: await userId
-  });
-  
-  // Update the last Firebase sync time
-  const currentTime = Date.now();
-  lastFirebaseSync = currentTime;
-  await figma.clientStorage.setAsync('lastFirebaseSync', currentTime);
+  try {
+    console.log('Requesting data from Firebase');
+    
+    if (!firebaseInitialized) {
+      console.warn('Firebase not initialized, sending config first');
+      sendFirebaseConfig();
+      
+      // Try again after a short delay
+      setTimeout(() => {
+        if (firebaseInitialized) {
+          requestFirebaseData();
+        }
+      }, 2000);
+      return;
+    }
+    
+    // Request data from UI
+    figma.ui.postMessage({
+      type: 'load-from-firebase',
+      userId: await userId
+    });
+  } catch (error) {
+    console.error('Error requesting Firebase data:', error);
+  }
 }
 
 // Load plugin data
