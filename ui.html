@@ -373,7 +373,7 @@
   <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-auth.js"></script>
   <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-database.js"></script>
 
-  <script>
+<script>
     // Firebase variables
     let firebaseConfig = null;
     let firebaseInitialized = false;
@@ -392,8 +392,6 @@
     let activePageName = null;
     let backgroundTracking = true;
     let summaryData = null; // Track the summary data persistently
-    let lastDataRefresh = 0;
-    const DATA_REFRESH_INTERVAL = 24 * 60 * 60 * 1000; // 24 hours in milliseconds
 
     // Initialize Firebase when config is received
     function initializeFirebase(config) {
@@ -418,18 +416,11 @@
             // User is signed in
             userId = user.uid;
             
-            // Store user ID in localStorage for persistence
-            try {
-              localStorage.setItem('figma_time_tracker_userId', userId);
-            } catch (storageError) {
-              console.warn('Could not store userId in localStorage:', storageError);
-            }
-            
             // Notify plugin that Firebase is initialized
             parent.postMessage({ pluginMessage: { type: 'firebase-init-complete' } }, '*');
             
-            // Check if we need to refresh data based on time
-            checkAndLoadPersistedData(true);
+            // Immediately check if we need to start a new day's tracking
+            checkAndHandleDayChange();
             
             // Immediately load summary data if available
             loadSummaryFromFirebase();
@@ -481,305 +472,508 @@
       }
     }
     
-    // Check if we need to refresh data based on time (8am-8am cycle)
-    function checkAndLoadPersistedData(forceLoad = false) {
+    // Check if we need to start a new day's tracking (8am to 8am cycle)
+    function checkAndHandleDayChange() {
+      if (!firebaseDb || !userId) return;
+      
       try {
-        // Get the current time
-        const now = new Date();
-        const currentHour = now.getHours();
-        
-        // Get the lastDataRefresh from localStorage if available
-        let storedLastRefresh = null;
-        try {
-          storedLastRefresh = localStorage.getItem('figma_time_tracker_lastRefresh');
-          if (storedLastRefresh) {
-            lastDataRefresh = parseInt(storedLastRefresh, 10);
-          }
-        } catch (storageError) {
-          console.warn('Could not read lastDataRefresh from localStorage:', storageError);
-        }
-        
-        console.log('Last data refresh:', new Date(lastDataRefresh).toLocaleString());
-        
-        // Check if it's 8am or if 24 hours have passed since last refresh
-        const isRefreshTime = currentHour === 8; // 8am
-        const is24HoursPassed = (now.getTime() - lastDataRefresh) >= DATA_REFRESH_INTERVAL;
-        
-        if (forceLoad || isRefreshTime || is24HoursPassed || !lastDataRefresh) {
-          console.log('Time to refresh data from Firebase!');
-          
-          // Update last refresh time
-          lastDataRefresh = now.getTime();
-          try {
-            localStorage.setItem('figma_time_tracker_lastRefresh', lastDataRefresh.toString());
-          } catch (storageError) {
-            console.warn('Could not store lastDataRefresh in localStorage:', storageError);
-          }
-          
-          // Load fresh data from Firebase
-          loadSummaryFromFirebase(true);
-          
-          return true;
-        }
-        
-        // If we don't need to refresh, check if we have cached data
-        let cachedData = null;
-        try {
-          const storedData = localStorage.getItem('figma_time_tracker_summaryData');
-          if (storedData) {
-            cachedData = JSON.parse(storedData);
-            console.log('Found cached summary data:', Object.keys(cachedData).length, 'files');
-          }
-        } catch (storageError) {
-          console.warn('Could not read cached data from localStorage:', storageError);
-        }
-        
-        // If we have cached data, use it immediately
-        if (cachedData && Object.keys(cachedData).length > 0) {
-          console.log('Using cached summary data');
-          summaryData = cachedData;
-          
-          // If summary tab is active, update display
-          if (document.getElementById('summary-tab').classList.contains('active')) {
-            updateSummaryDisplay(cachedData);
-          }
-          
-          return false;
-        }
-        
-        // If no cached data, load from Firebase
-        return false;
+        // Get the last reset timestamp
+        const lastResetRef = firebaseDb.ref('users/' + userId + '/lastReset');
+        lastResetRef.once('value')
+          .then(snapshot => {
+            const lastReset = snapshot.val() || 0;
+            const now = new Date();
+            const currentTime = now.getTime();
+            
+            // Check if it's past 8am
+            const todayEightAM = new Date(now);
+            todayEightAM.setHours(8, 0, 0, 0);
+            
+            // If it's before 8am, we use yesterday's 8am as reference
+            if (now.getHours() < 8) {
+              todayEightAM.setDate(todayEightAM.getDate() - 1);
+            }
+            
+            // Check if we haven't reset since the last 8am mark
+            if (lastReset < todayEightAM.getTime()) {
+              console.log('Day change detected (8am-8am cycle). Archiving previous day data...');
+              
+              // Archive previous day's data first
+              archivePreviousDayData(lastReset, todayEightAM.getTime())
+                .then(() => {
+                  // Update the last reset timestamp
+                  lastResetRef.set(currentTime);
+                  console.log('Day change handled, reset timestamp updated');
+                })
+                .catch(error => {
+                  console.error('Error handling day change:', error);
+                });
+            } else {
+              console.log('No day change needed. Last reset:', new Date(lastReset).toLocaleString());
+            }
+          })
+          .catch(error => {
+            console.error('Error checking day change:', error);
+          });
       } catch (error) {
-        console.error('Error in checkAndLoadPersistedData:', error);
-        return false;
+        console.error('Error in checkAndHandleDayChange:', error);
+      }
+    }
+
+    // Archive previous day's data for history
+    function archivePreviousDayData(lastReset, currentReset) {
+      return new Promise((resolve, reject) => {
+        try {
+          console.log('Archiving data from', new Date(lastReset).toLocaleString(), 'to', new Date(currentReset).toLocaleString());
+          
+          // Get the current data
+          const currentDataRef = firebaseDb.ref('timeData/' + userId);
+          currentDataRef.once('value')
+            .then(snapshot => {
+              const currentData = snapshot.val();
+              
+              if (!currentData) {
+                console.log('No data to archive');
+                resolve();
+                return;
+              }
+              
+              // Create an archive entry with timestamp
+              const archiveRef = firebaseDb.ref('timeDataArchive/' + userId + '/' + currentReset);
+              
+              // Store the current data in the archive
+              archiveRef.set({
+                periodStart: lastReset || (currentReset - 86400000), // Default to 24 hours before if no last reset
+                periodEnd: currentReset,
+                data: currentData
+              })
+                .then(() => {
+                  console.log('Previous day data archived successfully');
+                  // We don't clear the data - we keep accumulating
+                  resolve();
+                })
+                .catch(error => {
+                  console.error('Error archiving data:', error);
+                  reject(error);
+                });
+            })
+            .catch(error => {
+              console.error('Error getting current data for archiving:', error);
+              reject(error);
+            });
+        } catch (error) {
+          console.error('Error in archivePreviousDayData:', error);
+          reject(error);
+        }
+      });
+    }
+
+    // Check if summary tab is active and load data if needed
+    function checkSummaryTabAndLoadData() {
+      // If summary tab is active and data hasn't been loaded yet
+      if (document.getElementById('summary-tab').classList.contains('active') && !summaryLoaded) {
+        console.log('Summary tab is active, requesting immediate data');
+        // Request summary data from plugin
+        parent.postMessage({ pluginMessage: { 
+          type: 'get-summary',
+          immediate: true
+        } }, '*');
       }
     }
 
     // Save data to Firebase
-    function saveDataToFirebase(data, userId, timestamp) {
+    function saveToFirebase(data, userId) {
+      if (!firebaseInitialized) {
+        console.error('Firebase not initialized yet, cannot save data');
+        return;
+      }
+      
       try {
-        if (!firebaseInitialized || !firebaseDb) {
-          console.warn('Firebase not initialized, cannot save data');
-          updateFirebaseStatus('Firebase not ready, save failed', true);
-          return;
-        }
+        console.log('Saving data to Firebase for user:', userId);
+        const dbRef = firebase.database().ref('users/' + userId + '/files');
         
-        console.log('Saving data to Firebase for user', userId);
-        updateFirebaseStatus('Saving to Firebase...');
-        
-        // Ensure file names are properly stored
-        if (data && typeof data === 'object') {
-          Object.keys(data).forEach(fileId => {
-            if (data[fileId] && !data[fileId].name && data[fileId].fileName) {
-              data[fileId].name = data[fileId].fileName;
-            }
-          });
-        }
-        
-        // Store in the timeData path with userId as the key
-        const timeDataRef = firebaseDb.ref('timeData/' + userId);
-        
-        timeDataRef.set(data)
+        // Use set to completely replace the data
+        dbRef.set(data)
           .then(() => {
             console.log('Data saved to Firebase successfully');
-            // Store the data in our local variable
-            summaryData = data;
+            document.getElementById('firebase-status').textContent = 'Data synced to Firebase';
+            document.getElementById('firebase-status').style.color = 'green';
             
-            // Also cache in localStorage for persistence
-            try {
-              localStorage.setItem('figma_time_tracker_summaryData', JSON.stringify(data));
-            } catch (storageError) {
-              console.warn('Could not cache summaryData in localStorage:', storageError);
-            }
-            
-            updateFirebaseStatus('Data saved to Firebase');
+            // Clear status message after 3 seconds
+            setTimeout(() => {
+              document.getElementById('firebase-status').textContent = '';
+            }, 3000);
           })
-          .catch(error => {
-            console.error('Error saving to Firebase:', error);
-            updateFirebaseStatus('Firebase save error: ' + error.message, true);
+          .catch((error) => {
+            console.error('Error saving data to Firebase:', error);
+            handleFirebaseError(error);
           });
-          
-        // Also save last sync timestamp
-        const syncRef = firebaseDb.ref('lastSync/' + userId);
-        syncRef.set(timestamp);
-        
-        // Update last refresh time
-        lastDataRefresh = Date.now();
-        try {
-          localStorage.setItem('figma_time_tracker_lastRefresh', lastDataRefresh.toString());
-        } catch (storageError) {
-          console.warn('Could not store lastDataRefresh in localStorage:', storageError);
-        }
       } catch (error) {
-        console.error('Error in saveDataToFirebase:', error);
-        updateFirebaseStatus('Firebase error: ' + error.message, true);
+        console.error('Error in saveToFirebase:', error);
+        handleFirebaseError(error);
       }
     }
 
-    // Load summary data from Firebase with better error handling and timeout
-    function loadSummaryFromFirebase(retryWithLocal = true) {
-      try {
-        if (!firebaseInitialized || !firebaseDb || !userId) {
-          console.warn('Firebase not ready for loading summary. Using local data.');
-          
-          // Try to use cached data from localStorage
-          let cachedData = null;
-          try {
-            const storedData = localStorage.getItem('figma_time_tracker_summaryData');
-            if (storedData) {
-              cachedData = JSON.parse(storedData);
-              console.log('Found cached summary data:', Object.keys(cachedData).length, 'files');
-              summaryData = cachedData;
-              updateSummaryDisplay(cachedData);
-            }
-          } catch (storageError) {
-            console.warn('Could not read cached data from localStorage:', storageError);
-          }
-          
-          // Show the current summary data if available
-          if (summaryData) {
-            updateSummaryDisplay(summaryData);
-          }
-          
-          if (retryWithLocal) {
-            // Request local summary as fallback
-            requestLocalSummaryData();
-          }
-          return;
+    // Load data from Firebase
+    function loadFromFirebase(userId, retryWithLocal = true) {
+      if (!firebaseInitialized) {
+        console.error('Firebase not initialized yet, cannot load data');
+        
+        if (retryWithLocal) {
+          console.log('Loading summary from local data instead');
+          loadSummaryFromLocal();
         }
+        return;
+      }
+      
+      try {
+        console.log('Loading data from Firebase for user:', userId);
+        document.getElementById('summary-loading').textContent = 'Loading data from Firebase...';
         
-        updateFirebaseStatus('Loading data from Firebase...');
-        console.log('Loading summary data from Firebase for user', userId);
+        const dbRef = firebase.database().ref('users/' + userId + '/files');
         
-        // Set a timeout for Firebase operations
-        const timeoutId = setTimeout(() => {
-          console.warn('Firebase data loading timeout, using local data');
-          updateFirebaseStatus('Firebase timeout, using local data', true);
-          
-          // Try to use cached data from localStorage
-          let cachedData = null;
-          try {
-            const storedData = localStorage.getItem('figma_time_tracker_summaryData');
-            if (storedData) {
-              cachedData = JSON.parse(storedData);
-              console.log('Found cached summary data:', Object.keys(cachedData).length, 'files');
-              summaryData = cachedData;
-              updateSummaryDisplay(cachedData);
-            }
-          } catch (storageError) {
-            console.warn('Could not read cached data from localStorage:', storageError);
-          }
-          
-          // Use stored summary data if available
-          if (summaryData) {
-            updateSummaryDisplay(summaryData);
-          }
-          
-          // Request fresh local data
-          if (retryWithLocal) {
-            requestLocalSummaryData();
-          }
-        }, 4000); // 4 second timeout
-        
-        const timeDataRef = firebaseDb.ref('timeData/' + userId);
-        timeDataRef.once('value')
-          .then(snapshot => {
-            // Clear the timeout as we got a response
-            clearTimeout(timeoutId);
-            
+        dbRef.once('value')
+          .then((snapshot) => {
             const data = snapshot.val();
-            console.log('Firebase data loaded:', data);
             
             if (data) {
-              // Store the data for persistence
-              summaryData = data; 
+              console.log('Data loaded from Firebase:', data);
               
-              // Cache in localStorage for persistence
-              try {
-                localStorage.setItem('figma_time_tracker_summaryData', JSON.stringify(data));
-                localStorage.setItem('figma_time_tracker_lastRefresh', Date.now().toString());
-              } catch (storageError) {
-                console.warn('Could not cache summaryData in localStorage:', storageError);
-              }
-              
-              // Update the display
-              updateSummaryDisplay(data);
-              
-              // Notify plugin the data was loaded
+              // Send data to plugin
               parent.postMessage({ 
                 pluginMessage: { 
-                  type: 'firebase-data-loaded', 
-                  data: data 
+                  type: 'firebase-data-loaded',
+                  data: data
                 } 
               }, '*');
               
-              updateFirebaseStatus('Data loaded from Firebase');
-            } else {
-              console.log('No data found in Firebase, requesting from plugin');
+              // Update UI with data
+              updateSummaryDisplay(data);
+              summaryLoaded = true;
               
-              // If we have stored summary data, show it immediately
-              if (summaryData) {
-                updateSummaryDisplay(summaryData);
-              } else {
-                updateSummaryDisplay({});
-              }
+              document.getElementById('firebase-status').textContent = 'Data loaded from Firebase';
+              document.getElementById('firebase-status').style.color = 'green';
+              
+              // Clear status message after 3 seconds
+              setTimeout(() => {
+                document.getElementById('firebase-status').textContent = '';
+              }, 3000);
+            } else {
+              console.log('No data found in Firebase');
               
               if (retryWithLocal) {
-                // Request local summary as fallback
-                requestLocalSummaryData();
+                console.log('Loading summary from local data instead');
+                loadSummaryFromLocal();
               }
               
-              updateFirebaseStatus('No data in Firebase, using local', true);
+              // Notify plugin no data was found
+              parent.postMessage({ 
+                pluginMessage: { 
+                  type: 'firebase-data-loaded',
+                  data: {}
+                } 
+              }, '*');
             }
           })
-          .catch(error => {
-            // Clear the timeout as we got a response (error)
-            clearTimeout(timeoutId);
-            
+          .catch((error) => {
             console.error('Error loading data from Firebase:', error);
-            updateFirebaseStatus('Firebase error: ' + error.message, true);
-            
-            // Try to use cached data from localStorage
-            let cachedData = null;
-            try {
-              const storedData = localStorage.getItem('figma_time_tracker_summaryData');
-              if (storedData) {
-                cachedData = JSON.parse(storedData);
-                console.log('Found cached summary data from localStorage');
-                summaryData = cachedData;
-                updateSummaryDisplay(cachedData);
-              }
-            } catch (storageError) {
-              console.warn('Could not read cached data from localStorage:', storageError);
-            }
-            
-            // If we have stored summary data, show it immediately
-            if (summaryData) {
-              updateSummaryDisplay(summaryData);
-            }
+            handleFirebaseError(error);
             
             if (retryWithLocal) {
-              // Request local summary as fallback
-              requestLocalSummaryData();
+              console.log('Loading summary from local data instead');
+              loadSummaryFromLocal();
             }
           });
       } catch (error) {
-        console.error('Error in loadSummaryFromFirebase:', error);
-        updateFirebaseStatus('Firebase error: ' + error.message, true);
-        
-        // If we have stored summary data, show it immediately
-        if (summaryData) {
-          updateSummaryDisplay(summaryData);
-        }
+        console.error('Error in loadFromFirebase:', error);
+        handleFirebaseError(error);
         
         if (retryWithLocal) {
-          // Request local summary as fallback
-          requestLocalSummaryData();
+          console.log('Loading summary from local data instead');
+          loadSummaryFromLocal();
         }
       }
     }
 
-    // Update summary display with fixed file name handling
+    // Load summary from local data
+    function loadSummaryFromLocal() {
+      console.log('Requesting local summary data');
+      document.getElementById('summary-loading').textContent = 'Loading from local data...';
+      
+      // Request summary data from plugin
+      parent.postMessage({ pluginMessage: { 
+        type: 'get-summary',
+        immediate: true
+      } }, '*');
+    }
+
+    // Update file info display
+    function updateFileInfo(fileName, pageName) {
+      console.log('Updating file info:', { fileName, pageName });
+      
+      // Update file name display
+      const fileNameElement = document.getElementById('file-name');
+      if (fileNameElement) {
+        fileNameElement.textContent = fileName || 'Not selected';
+      }
+      
+      // Update page name display
+      const pageNameElement = document.getElementById('page-name');
+      if (pageNameElement) {
+        pageNameElement.textContent = pageName || 'Not selected';
+      }
+    }
+    
+    // Format time in HH:MM:SS
+    function formatTime(seconds) {
+      const hours = Math.floor(seconds / 3600);
+      const minutes = Math.floor((seconds % 3600) / 60);
+      const secs = seconds % 60;
+      
+      return `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+    }
+    
+    // Format time for display (converts to hours, minutes, seconds)
+    function formatTimeDisplay(seconds) {
+      if (seconds < 60) {
+        return `${seconds}s`;
+      } else if (seconds < 3600) {
+        const minutes = Math.floor(seconds / 60);
+        return `${minutes}m`;
+      } else {
+        const hours = Math.floor(seconds / 3600);
+        const minutes = Math.floor((seconds % 3600) / 60);
+        return `${hours}h ${minutes}m`;
+      }
+    }
+    
+    // Update timer display based on tracking status
+    function updateTimerDisplay(tracking, startTime) {
+      console.log('Updating timer display:', { tracking, startTime });
+      
+      isTracking = tracking;
+      
+      // Clear any existing timer interval
+      if (updateTimerInterval) {
+        clearInterval(updateTimerInterval);
+        updateTimerInterval = null;
+      }
+      
+      if (tracking && startTime) {
+        // Store tracking start time
+        trackingStartTime = startTime;
+        
+        // Start updating the timer every second
+        updateTimerInterval = setInterval(() => {
+          const now = Date.now();
+          const elapsed = now - trackingStartTime;
+          const seconds = Math.floor(elapsed / 1000);
+          document.getElementById('timer').textContent = formatTime(seconds);
+        }, 1000);
+        
+        // Update initial time
+        const initialElapsed = Date.now() - startTime;
+        const initialSeconds = Math.floor(initialElapsed / 1000);
+        document.getElementById('timer').textContent = formatTime(initialSeconds);
+        
+        // Show the timer dot as active
+        document.getElementById('timer-dot').style.display = 'block';
+        
+        // Update status text
+        document.getElementById('status-text').textContent = 'Currently tracking';
+        document.getElementById('status-text').className = 'status-active';
+        
+        // Update button visibility
+        document.getElementById('toggle-timer').style.display = 'none';
+        document.getElementById('save-time').style.display = 'inline-block';
+      } else {
+        // Reset the timer display
+        document.getElementById('timer').textContent = '00:00:00';
+        
+        // Hide the timer dot
+        document.getElementById('timer-dot').style.display = 'none';
+        
+        // Update status text
+        document.getElementById('status-text').textContent = 'Not tracking';
+        document.getElementById('status-text').className = '';
+        
+        // Update button visibility
+        document.getElementById('toggle-timer').style.display = 'inline-block';
+        document.getElementById('save-time').style.display = 'none';
+      }
+    }
+    
+    // Update the file list display with unified view across all files
+    function updateFileList(files, currentActiveFileId) {
+      const filesContainer = document.getElementById('files-container');
+      filesContainer.innerHTML = '';
+      
+      // Store all files for future reference
+      allFiles = files || [];
+      
+      // Update the active file ID
+      if (currentActiveFileId) {
+        activeFileId = currentActiveFileId;
+      }
+      
+      console.log('Updating file list:', { 
+        filesCount: allFiles.length, 
+        activeFileId: activeFileId 
+      });
+      
+      if (!allFiles || allFiles.length === 0) {
+        filesContainer.innerHTML = '<div>No files tracked yet</div>';
+        return;
+      }
+      
+      // Add a summary header
+      const summaryHeader = document.createElement('div');
+      summaryHeader.className = 'summary-title';
+      summaryHeader.textContent = 'Time Summary (All Files)';
+      filesContainer.appendChild(summaryHeader);
+      
+      // Sort files with active file first, then by total time (most time first)
+      const sortedFiles = [...allFiles].sort((a, b) => {
+        // Active file always first
+        if (a.id === activeFileId) return -1;
+        if (b.id === activeFileId) return 1;
+        
+        // Then by total time
+        return b.totalTime - a.totalTime;
+      });
+      
+      // Calculate total time across all files
+      const totalTimeAllFiles = sortedFiles.reduce((total, file) => total + file.totalTime, 0);
+      
+      // Add total time summary
+      if (totalTimeAllFiles > 0) {
+        const totalTimeElement = document.createElement('div');
+        totalTimeElement.className = 'total-time-summary';
+        totalTimeElement.innerHTML = `
+          <div class="total-label">Total Time Tracked:</div>
+          <div class="total-value">${formatTime(Math.floor(totalTimeAllFiles / 1000))}</div>
+        `;
+        filesContainer.appendChild(totalTimeElement);
+      }
+      
+      // Create file cards
+      sortedFiles.forEach(file => {
+        const isCurrentlyActive = file.id === activeFileId;
+        
+        const fileCard = document.createElement('div');
+        fileCard.className = `file-card ${isCurrentlyActive ? 'active' : ''}`;
+        
+        const fileHeader = document.createElement('div');
+        fileHeader.className = 'file-header';
+        
+        const fileName = document.createElement('div');
+        fileName.className = 'file-name';
+        
+        // Add indicator for active file
+        if (isCurrentlyActive) {
+          const activeIndicator = document.createElement('span');
+          activeIndicator.className = 'active-indicator';
+          fileName.appendChild(activeIndicator);
+        }
+        
+        const fileNameText = document.createElement('span');
+        fileNameText.textContent = file.name;
+        fileName.appendChild(fileNameText);
+        
+        const fileTime = document.createElement('div');
+        fileTime.className = 'file-time';
+        fileTime.textContent = formatTime(Math.floor(file.totalTime / 1000));
+        
+        fileHeader.appendChild(fileName);
+        fileHeader.appendChild(fileTime);
+        fileCard.appendChild(fileHeader);
+        
+        // Create page list if it has pages
+        if (file.pages && Object.keys(file.pages).length > 0) {
+          const pagesList = document.createElement('div');
+          pagesList.className = 'pages-list';
+          
+          // Convert pages object to array and sort by tracked time
+          const pagesArray = Object.values(file.pages);
+          const sortedPages = [...pagesArray].sort((a, b) => {
+            // Active page always first
+            if (a.id === activePageId) return -1;
+            if (b.id === activePageId) return 1;
+            
+            // Then by tracked time
+            return b.totalTime - a.totalTime;
+          });
+          
+          let hasPages = false;
+          sortedPages.forEach(page => {
+            // Skip pages with no tracked time unless they're active
+            if (page.totalTime === 0 && page.id !== activePageId) return;
+            hasPages = true;
+            
+            const pageRow = document.createElement('div');
+            pageRow.className = `page-row ${page.id === activePageId ? 'active' : ''}`;
+            
+            const pageName = document.createElement('div');
+            pageName.className = 'page-name';
+            
+            // Add indicator for active page
+            if (page.id === activePageId) {
+              const activeIndicator = document.createElement('span');
+              activeIndicator.textContent = '• ';
+              activeIndicator.style.color = '#18a0fb';
+              pageName.appendChild(activeIndicator);
+            }
+            
+            const pageNameText = document.createElement('span');
+            pageNameText.textContent = page.name;
+            pageName.appendChild(pageNameText);
+            
+            const pageTime = document.createElement('div');
+            pageTime.className = 'page-time';
+            pageTime.textContent = formatTime(Math.floor(page.totalTime / 1000));
+            
+            pageRow.appendChild(pageName);
+            pageRow.appendChild(pageTime);
+            pagesList.appendChild(pageRow);
+          });
+          
+          if (hasPages) {
+            fileCard.appendChild(pagesList);
+          }
+        }
+        
+        filesContainer.appendChild(fileCard);
+      });
+    }
+    
+    // Update the UI when we receive all files data
+    function handleAllFilesData(data) {
+      if (!data.files) return;
+      
+      // Update the file list with all files data
+      updateFileList(data.files, data.activeFileId);
+      
+      // Update any other UI elements that need all files data
+      updateTotalTimeDisplay(data.files);
+    }
+
+    // Calculate and display total time across all files
+    function updateTotalTimeDisplay(files) {
+      if (!files || !files.length) return;
+      
+      // Calculate total time
+      const totalSeconds = files.reduce((total, file) => {
+        return total + Math.floor(file.totalTime / 1000);
+      }, 0);
+      
+      // Update total time display if it exists
+      const totalTimeElement = document.querySelector('.total-time-display');
+      if (totalTimeElement) {
+        totalTimeElement.textContent = formatTime(totalSeconds);
+      }
+    }
+
+    // Update summary display with better file name handling and 24-hour persistence
     function updateSummaryDisplay(filesData) {
       try {
         console.log('Updating summary display with data:', filesData);
@@ -805,7 +999,7 @@
           refreshButton.onclick = () => {
             console.log('Manual summary refresh requested');
             document.getElementById('summary-loading').textContent = 'Refreshing summary...';
-            checkAndLoadPersistedData(true); // Force refresh from Firebase
+            parent.postMessage({ pluginMessage: { type: 'get-summary', immediate: true } }, '*');
           };
           summaryContainer.appendChild(refreshButton);
           
@@ -816,7 +1010,7 @@
         const header = document.createElement('div');
         header.className = 'summary-header';
         header.innerHTML = `
-          <div class="summary-title">Summary (8am-8am)</div>
+          <div class="summary-title">Summary (8am-8am Cycle)</div>
           <div class="summary-refresh">
             <button id="refresh-summary">Refresh</button>
           </div>
@@ -827,7 +1021,7 @@
         document.getElementById('refresh-summary').addEventListener('click', () => {
           console.log('Manual summary refresh requested');
           document.getElementById('summary-loading').textContent = 'Refreshing summary...';
-          checkAndLoadPersistedData(true); // Force refresh from Firebase
+          parent.postMessage({ pluginMessage: { type: 'get-summary', immediate: true } }, '*');
         });
         
         // Create summary list
@@ -838,47 +1032,37 @@
         let totalSeconds = 0;
         
         // Process each file
-        Object.entries(filesData).forEach(([fileId, file]) => {
+        Object.keys(filesData).forEach((fileId) => {
           try {
-            // Get correct file name with fallbacks
-            const fileName = file.name || file.fileName || `File ${fileId.substring(0, 6)}`;
+            const file = filesData[fileId];
             
-            // Calculate total time for this file
-            let fileSeconds = 0;
-            
-            // Add up time from file.totalSeconds if available
-            if (file.totalSeconds) {
-              fileSeconds += file.totalSeconds;
+            // Skip files with no time tracked or no name
+            if (!file || (!file.totalSeconds && !file.totalTime) || !file.name) {
+              return;
             }
             
-            // Add up time from file.totalTime if available (milliseconds to seconds)
-            if (file.totalTime) {
-              fileSeconds += Math.floor(file.totalTime / 1000);
-            }
+            // Get the file time (handle both totalSeconds and totalTime formats)
+            const fileSeconds = file.totalSeconds || Math.floor(file.totalTime / 1000) || 0;
             
-            // If we have pages, add up their times too
-            if (file.pages) {
-              Object.values(file.pages).forEach(page => {
-                if (page.totalTime) {
-                  fileSeconds += Math.floor(page.totalTime / 1000);
-                }
-                
-                if (page.entries) {
-                  Object.values(page.entries).forEach(entry => {
-                    if (entry.duration) {
-                      fileSeconds += Math.floor(entry.duration / 1000);
-                    }
-                  });
-                }
-              });
-            }
-            
-            // Skip files with no time tracked
+            // Skip files with no time
             if (fileSeconds === 0) {
               return;
             }
             
             totalSeconds += fileSeconds;
+            
+            // Get the clean file name (remove path and extension if present)
+            let fileName = file.name;
+            
+            // Extract just the file name from paths like "path/to/filename.fig"
+            if (fileName.includes('/')) {
+              fileName = fileName.split('/').pop();
+            }
+            
+            // Remove .fig extension if present
+            if (fileName.endsWith('.fig')) {
+              fileName = fileName.substring(0, fileName.length - 4);
+            }
             
             // Create file entry
             const fileEntry = document.createElement('div');
@@ -891,16 +1075,16 @@
             
             const formattedTime = `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
             
-            // Set the content with real file name
+            // Set the content
             fileEntry.innerHTML = `
-              <div class="summary-file-name">${fileName}</div>
+              <div class="summary-file-name">${fileName || 'Unnamed File'}</div>
               <div class="summary-file-time">${formattedTime}</div>
             `;
             
             // Add the entry to the list
             summaryList.appendChild(fileEntry);
           } catch (fileError) {
-            console.error('Error processing file in summary:', fileError, file);
+            console.error('Error processing file in summary:', fileError);
           }
         });
         
@@ -925,6 +1109,9 @@
         
         summaryContainer.appendChild(totalTimeElement);
         
+        // Store the summary data for persistence
+        summaryData = filesData;
+        
         console.log('Summary display updated successfully');
         
       } catch (error) {
@@ -939,26 +1126,207 @@
         retryButton.textContent = 'Retry';
         retryButton.className = 'summary-retry-button';
         retryButton.onclick = () => {
-          checkAndLoadPersistedData(true); // Force refresh
+          parent.postMessage({ pluginMessage: { type: 'get-summary', immediate: true } }, '*');
         };
         summaryContainer.appendChild(retryButton);
       }
     }
 
-    // Update Firebase status display
-    function updateFirebaseStatus(message, isError = false) {
-      const statusElement = document.getElementById('firebase-status');
-      if (statusElement) {
-        statusElement.textContent = message;
-        statusElement.style.color = isError ? 'red' : 'green';
+    // Show error message
+    function showErrorMessage(message) {
+      const errorContainer = document.getElementById('error-container');
+      errorContainer.textContent = message;
+      errorContainer.style.display = 'block';
+      
+      // Hide after 5 seconds
+      setTimeout(() => {
+        errorContainer.style.display = 'none';
+      }, 5000);
+    }
+    
+    // Listen for messages from the plugin
+    window.onmessage = (event) => {
+      const message = event.data.pluginMessage;
+      if (!message) return;
+
+      console.log('Message received from plugin:', message.type);
+      
+      // Handle different message types
+      if (message.type === 'firebase-config') {
+        console.log('Received Firebase config');
         
-        // Clear status after some time if it's not an error
-        if (!isError) {
-          setTimeout(() => {
-            statusElement.textContent = '';
-          }, 5000);
+        // Store user ID
+        if (message.userId) {
+          userId = message.userId;
+          console.log('User ID set:', userId);
         }
+        
+        // Initialize Firebase with the config
+        initializeFirebase(message.config);
+      } 
+      
+      else if (message.type === 'tracking-status') {
+        console.log('Received tracking status:', message.isTracking);
+        
+        // Update tracking variables
+        isTracking = message.isTracking;
+        activeFileName = message.fileName;
+        activePageName = message.pageName;
+        backgroundTracking = message.backgroundTracking;
+        
+        // Update UI elements
+        updateTrackingUI();
+        updateTimerDisplay();
+        updateBackgroundTrackingUI();
+        
+        // Display active file/page names
+        updateFileInfo();
+      } 
+      
+      else if (message.type === 'file-changed') {
+        console.log('File changed notification received');
+        
+        // Update active file and page
+        activeFileId = message.fileId;
+        activePage = message.pageId;
+        activeFileName = message.fileName;
+        activePageName = message.pageName;
+        
+        // Update file name in UI
+        updateFileInfo();
+        
+        // If resetTimer flag is present, ensure the timer is reset
+        if (message.resetTimer) {
+          console.log('Resetting timer display due to file change');
+          resetTimerDisplay();
+        }
+      } 
+      
+      else if (message.type === 'files-updated') {
+        console.log('Files data updated');
+        
+        // Store files data
+        files = message.files;
+        activeFileId = message.activeFileId;
+        activePage = message.activePage;
+        
+        // Update file list
+        updateFilesList();
+      } 
+      
+      else if (message.type === 'update-summary') {
+        console.log('Received summary update', message.immediate ? '(immediate)' : '');
+        
+        // Update summary display with files data
+        updateSummaryDisplay(message.files);
+        summaryLoaded = true;
+        
+        // Hide loading message
+        document.getElementById('summary-loading').textContent = '';
+      } 
+      
+      else if (message.type === 'save-to-firebase') {
+        console.log('Saving data to Firebase');
+        
+        // Save data to Firebase
+        saveToFirebase(message.files, message.userId);
+      } 
+      
+      else if (message.type === 'load-from-firebase') {
+        console.log('Loading data from Firebase');
+        
+        // Load data from Firebase
+        loadFromFirebase(message.userId);
       }
+    };
+
+    // Reset the timer display
+    function resetTimerDisplay() {
+      // Clear any existing interval
+      if (updateTimerInterval) {
+        clearInterval(updateTimerInterval);
+        updateTimerInterval = null;
+      }
+      
+      // Reset timer text
+      document.getElementById('timer').textContent = '00:00:00';
+      
+      // Hide timer dot since we're no longer tracking
+      document.getElementById('timer-dot').style.display = 'none';
+      
+      // Update button visibility
+      document.getElementById('start-button').style.display = 'block';
+      document.getElementById('stop-button').style.display = 'none';
+      
+      console.log('Timer display reset');
+    }
+
+    // Update the timer display
+    function updateTimerDisplay() {
+      // Clear any existing timer interval
+      if (updateTimerInterval) {
+        clearInterval(updateTimerInterval);
+        updateTimerInterval = null;
+      }
+      
+      // Get the timer element
+      const timerElement = document.getElementById('timer');
+      
+      if (isTracking) {
+        console.log('Updating timer for active tracking');
+        
+        // Show the timer dot to indicate active tracking
+        document.getElementById('timer-dot').style.display = 'inline-block';
+        
+        // Show the appropriate buttons
+        document.getElementById('stop-button').style.display = 'block';
+        document.getElementById('start-button').style.display = 'none';
+        
+        // Set the start time if it's not already set
+        if (!startTime) {
+          startTime = Date.now();
+        }
+        
+        // Update timer immediately
+        updateTimerText();
+        
+        // Set up interval to update timer
+        updateTimerInterval = setInterval(updateTimerText, 1000);
+      } else {
+        console.log('Updating timer for inactive state');
+        
+        // Hide the timer dot since we're not tracking
+        document.getElementById('timer-dot').style.display = 'none';
+        
+        // Show the appropriate buttons
+        document.getElementById('start-button').style.display = 'block';
+        document.getElementById('stop-button').style.display = 'none';
+        
+        // Reset the timer display
+        timerElement.textContent = '00:00:00';
+        startTime = null;
+      }
+    }
+
+    // Update the timer text
+    function updateTimerText() {
+      if (!isTracking || !startTime) return;
+      
+      const now = Date.now();
+      const elapsed = now - startTime;
+      
+      // Format the time as HH:MM:SS
+      const seconds = Math.floor(elapsed / 1000);
+      const minutes = Math.floor(seconds / 60);
+      const hours = Math.floor(minutes / 60);
+      
+      const formattedHours = hours.toString().padStart(2, '0');
+      const formattedMinutes = (minutes % 60).toString().padStart(2, '0');
+      const formattedSeconds = (seconds % 60).toString().padStart(2, '0');
+      
+      // Update the timer text
+      document.getElementById('timer').textContent = 
+        `${formattedHours}:${formattedMinutes}:${formattedSeconds}`;
     }
 
     // Update the file information display
@@ -990,20 +1358,6 @@
     // Initialization function for the UI
     function initializeUI() {
       console.log('Initializing UI');
-      
-      // Try to restore user ID from localStorage
-      try {
-        const storedUserId = localStorage.getItem('figma_time_tracker_userId');
-        if (storedUserId) {
-          console.log('Restored userId from localStorage:', storedUserId);
-          userId = storedUserId;
-        }
-      } catch (storageError) {
-        console.warn('Could not read userId from localStorage:', storageError);
-      }
-      
-      // Check for cached summary data
-      checkAndLoadPersistedData(false);
       
       // Hide the inactive notice initially
       const inactiveNotice = document.getElementById('inactive-notice');
@@ -1515,343 +1869,168 @@
       }
     }
 
-    // Function to request summary data from the plugin
-    function requestLocalSummaryData() {
-      console.log('Requesting local summary data from plugin');
-      document.getElementById('summary-loading').textContent = 'Generating summary from local data...';
-      
-      // Request summary data from plugin with immediate flag to ensure quick response
-      parent.postMessage({ 
-        pluginMessage: { 
-          type: 'get-summary',
-          immediate: true
-        } 
-      }, '*');
-    }
-    
-    // Load summary from local data
-    function loadSummaryFromLocal() {
-      console.log('Requesting local summary data');
-      document.getElementById('summary-loading').textContent = 'Loading from local data...';
-      
-      requestLocalSummaryData();
-    }
-
-    // Update file info display
-    function updateFileInfo(fileName, pageName) {
-      console.log('Updating file info:', { fileName, pageName });
-      
-      // Update file name display
-      const fileNameElement = document.getElementById('file-name');
-      if (fileNameElement) {
-        fileNameElement.textContent = fileName || 'Not selected';
-      }
-      
-      // Update page name display
-      const pageNameElement = document.getElementById('page-name');
-      if (pageNameElement) {
-        pageNameElement.textContent = pageName || 'Not selected';
-      }
-    }
-    
-    // Format time in HH:MM:SS
-    function formatTime(seconds) {
-      const hours = Math.floor(seconds / 3600);
-      const minutes = Math.floor((seconds % 3600) / 60);
-      const secs = seconds % 60;
-      
-      return `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
-    }
-    
-    // Format time for display (converts to hours, minutes, seconds)
-    function formatTimeDisplay(seconds) {
-      if (seconds < 60) {
-        return `${seconds}s`;
-      } else if (seconds < 3600) {
-        const minutes = Math.floor(seconds / 60);
-        return `${minutes}m`;
-      } else {
-        const hours = Math.floor(seconds / 3600);
-        const minutes = Math.floor((seconds % 3600) / 60);
-        return `${hours}h ${minutes}m`;
-      }
-    }
-    
-    // Update timer display based on tracking status
-    function updateTimerDisplay(tracking, startTime) {
-      console.log('Updating timer display:', { tracking, startTime });
-      
-      isTracking = tracking;
-      
-      // Clear any existing timer interval
-      if (updateTimerInterval) {
-        clearInterval(updateTimerInterval);
-        updateTimerInterval = null;
-      }
-      
-      if (tracking && startTime) {
-        // Store tracking start time
-        trackingStartTime = startTime;
-        
-        // Start updating the timer every second
-        updateTimerInterval = setInterval(() => {
-          const now = Date.now();
-          const elapsed = now - trackingStartTime;
-          const seconds = Math.floor(elapsed / 1000);
-          document.getElementById('timer').textContent = formatTime(seconds);
-        }, 1000);
-        
-        // Update initial time
-        const initialElapsed = Date.now() - startTime;
-        const initialSeconds = Math.floor(initialElapsed / 1000);
-        document.getElementById('timer').textContent = formatTime(initialSeconds);
-        
-        // Show the timer dot as active
-        document.getElementById('timer-dot').style.display = 'block';
-        
-        // Update status text
-        document.getElementById('status-text').textContent = 'Currently tracking';
-        document.getElementById('status-text').className = 'status-active';
-        
-        // Update button visibility
-        document.getElementById('toggle-timer').style.display = 'none';
-        document.getElementById('save-time').style.display = 'inline-block';
-      } else {
-        // Reset the timer display
-        document.getElementById('timer').textContent = '00:00:00';
-        
-        // Hide the timer dot
-        document.getElementById('timer-dot').style.display = 'none';
-        
-        // Update status text
-        document.getElementById('status-text').textContent = 'Not tracking';
-        document.getElementById('status-text').className = '';
-        
-        // Update button visibility
-        document.getElementById('toggle-timer').style.display = 'inline-block';
-        document.getElementById('save-time').style.display = 'none';
-      }
-    }
-    
-    // Update the timer text
-    function updateTimerText() {
-      if (!isTracking || !startTime) return;
-      
-      const now = Date.now();
-      const elapsed = now - startTime;
-      
-      // Format the time as HH:MM:SS
-      const seconds = Math.floor(elapsed / 1000);
-      const minutes = Math.floor(seconds / 60);
-      const hours = Math.floor(minutes / 60);
-      
-      const formattedHours = hours.toString().padStart(2, '0');
-      const formattedMinutes = (minutes % 60).toString().padStart(2, '0');
-      const formattedSeconds = (seconds % 60).toString().padStart(2, '0');
-      
-      // Update the timer text
-      document.getElementById('timer').textContent = 
-        `${formattedHours}:${formattedMinutes}:${formattedSeconds}`;
-    }
-
-    // Update the file information display
-    function updateFileInfo() {
-      // Update file and page name displays
-      document.getElementById('file-name').textContent = activeFileName || 'No file';
-      document.getElementById('page-name').textContent = activePageName || 'No page';
-    }
-
-    // Update tracking UI
-    function updateTrackingUI() {
-      // Update the tracking status text
-      const statusElement = document.getElementById('tracking-status');
-      statusElement.textContent = isTracking ? 'Tracking' : 'Not Tracking';
-      statusElement.className = isTracking ? 'status-active' : 'status-inactive';
-    }
-
-    // Update background tracking UI
-    function updateBackgroundTrackingUI() {
-      // Update the background tracking toggle
-      document.getElementById('background-tracking').checked = backgroundTracking;
-    }
-
-    // Update the file list display
-    function updateFilesList() {
-      // Implementation of updateFilesList function
-    }
-
-    // Calculate and display total time across all files
-    function updateTotalTimeDisplay(files) {
-      if (!files || !files.length) return;
-      
-      // Calculate total time
-      const totalSeconds = files.reduce((total, file) => {
-        return total + Math.floor(file.totalTime / 1000);
-      }, 0);
-      
-      // Update total time display if it exists
-      const totalTimeElement = document.querySelector('.total-time-display');
-      if (totalTimeElement) {
-        totalTimeElement.textContent = formatTime(totalSeconds);
-      }
-    }
-
-    // Add message event listener
-    window.addEventListener('message', event => {
-      const message = event.data.pluginMessage;
-      if (!message) return;
-      
-      console.log('Message received from plugin:', message.type);
-      
-      if (message.type === 'tracking-status') {
-        // Update tracking status UI
-        console.log('Received tracking status:', message);
-        
-        // Update file and page name display
-        activeFileName = message.fileName;
-        activePageName = message.pageName;
-        activeFileId = message.fileId;
-        activePage = message.pageId;
-        
-        // Update tracking state
-        isTracking = message.isTracking;
-        backgroundTracking = message.backgroundTracking;
-        
-        // Update the UI elements
-        updateFileInfo();
-        updateTrackingUI();
-        updateBackgroundTrackingUI();
-        
-        // Update timer display with the correct start time
-        if (message.isTracking && message.startTime) {
-          console.log('Starting timer with startTime:', new Date(message.startTime).toISOString());
-          startTime = message.startTime;
+    // Load summary data from Firebase with better error handling and timeout
+    function loadSummaryFromFirebase(retryWithLocal = true) {
+      try {
+        if (!firebaseInitialized || !firebaseDb || !userId) {
+          console.warn('Firebase not ready for loading summary. Using local data.');
           
-          // Clear any existing interval
-          if (updateTimerInterval) {
-            clearInterval(updateTimerInterval);
+          // Show the current summary data if available
+          if (summaryData) {
+            updateSummaryDisplay(summaryData);
           }
           
-          // Start updating the timer every second
-          updateTimerInterval = setInterval(() => {
-            if (startTime) {
-              const now = Date.now();
-              const elapsed = now - startTime;
-              const seconds = Math.floor(elapsed / 1000);
+          if (retryWithLocal) {
+            // Request local summary as fallback
+            requestLocalSummaryData();
+          }
+          return;
+        }
+        
+        updateFirebaseStatus('Loading data from Firebase...');
+        console.log('Loading summary data from Firebase for user', userId);
+        
+        // Set a timeout for Firebase operations
+        const timeoutId = setTimeout(() => {
+          console.warn('Firebase data loading timeout, using local data');
+          updateFirebaseStatus('Firebase timeout, using local data', true);
+          
+          // Use stored summary data if available
+          if (summaryData) {
+            updateSummaryDisplay(summaryData);
+          }
+          
+          // Request fresh local data
+          if (retryWithLocal) {
+            requestLocalSummaryData();
+          }
+        }, 4000); // 4 second timeout
+        
+        const timeDataRef = firebaseDb.ref('timeData/' + userId);
+        timeDataRef.once('value')
+          .then(snapshot => {
+            // Clear the timeout as we got a response
+            clearTimeout(timeoutId);
+            
+            const data = snapshot.val();
+            console.log('Firebase data loaded:', data);
+            
+            if (data) {
+              summaryData = data; // Store the data in local variable
+              updateSummaryDisplay(data);
               
-              const hours = Math.floor(seconds / 3600);
-              const minutes = Math.floor((seconds % 3600) / 60);
-              const secs = seconds % 60;
+              // Notify plugin the data was loaded
+              parent.postMessage({ 
+                pluginMessage: { 
+                  type: 'firebase-data-loaded', 
+                  data: data 
+                } 
+              }, '*');
               
-              const formattedTime = `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+              updateFirebaseStatus('Data loaded from Firebase');
+            } else {
+              console.log('No data found in Firebase, requesting from plugin');
               
-              // Update the timer text
-              document.getElementById('timer').textContent = formattedTime;
+              // If we have stored summary data, show it immediately
+              if (summaryData) {
+                updateSummaryDisplay(summaryData);
+              } else {
+                updateSummaryDisplay({});
+              }
               
-              // Show the timer dot
-              document.getElementById('timer-dot').style.display = 'block';
+              if (retryWithLocal) {
+                // Request local summary as fallback
+                requestLocalSummaryData();
+              }
+              
+              updateFirebaseStatus('No data in Firebase, using local', true);
             }
-          }, 1000);
-          
-          // Also update immediately
-          const elapsed = Date.now() - startTime;
-          const seconds = Math.floor(elapsed / 1000);
-          
-          const hours = Math.floor(seconds / 3600);
-          const minutes = Math.floor((seconds % 3600) / 60);
-          const secs = seconds % 60;
-          
-          const formattedTime = `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
-          
-          document.getElementById('timer').textContent = formattedTime;
-          document.getElementById('timer-dot').style.display = 'block';
-          document.getElementById('tracking-status').textContent = "Tracking";
-          document.getElementById('tracking-status').className = "status-active";
-          
-          // Update buttons
-          document.getElementById('start-button').style.display = 'none';
-          document.getElementById('stop-button').style.display = 'inline-block';
-        } else {
-          console.log('Stopping timer display');
-          // Stop the timer
-          if (updateTimerInterval) {
-            clearInterval(updateTimerInterval);
-            updateTimerInterval = null;
-          }
-          
-          // Reset the timer display
-          document.getElementById('timer').textContent = '00:00:00';
-          document.getElementById('timer-dot').style.display = 'none';
-          document.getElementById('tracking-status').textContent = "Not Tracking";
-          document.getElementById('tracking-status').className = "status-inactive";
-          
-          // Update buttons
-          document.getElementById('start-button').style.display = 'inline-block';
-          document.getElementById('stop-button').style.display = 'none';
-        }
-      }
-      
-      else if (message.type === 'file-changed') {
-        console.log('File changed:', message);
-        // Update file and page info
-        activeFileId = message.fileId;
-        activePage = message.pageId;
-        activeFileName = message.fileName;
-        activePageName = message.pageName;
+          })
+          .catch(error => {
+            // Clear the timeout as we got a response (error)
+            clearTimeout(timeoutId);
+            
+            console.error('Error loading data from Firebase:', error);
+            updateFirebaseStatus('Firebase error: ' + error.message, true);
+            
+            // If we have stored summary data, show it immediately
+            if (summaryData) {
+              updateSummaryDisplay(summaryData);
+            }
+            
+            if (retryWithLocal) {
+              // Request local summary as fallback
+              requestLocalSummaryData();
+            }
+          });
+      } catch (error) {
+        console.error('Error in loadSummaryFromFirebase:', error);
+        updateFirebaseStatus('Firebase error: ' + error.message, true);
         
-        // Update UI
-        updateFileInfo();
-      }
-      
-      else if (message.type === 'files-updated') {
-        console.log('Files data updated:', message);
-        // Store files data
-        files = message.files;
-        
-        // Update UI
-        updateFilesList();
-      }
-      
-      else if (message.type === 'update-summary') {
-        console.log('Received summary update:', message);
-        // Hide loading message
-        document.getElementById('summary-loading').textContent = '';
-        
-        // Store the data for future reference
-        summaryData = message.files;
-        
-        // Store in localStorage for persistence
-        try {
-          localStorage.setItem('figma_time_tracker_summaryData', JSON.stringify(message.files));
-          localStorage.setItem('figma_time_tracker_lastRefresh', Date.now().toString());
-        } catch (storageError) {
-          console.warn('Could not store summary data in localStorage:', storageError);
+        // If we have stored summary data, show it immediately
+        if (summaryData) {
+          updateSummaryDisplay(summaryData);
         }
         
-        // Update the display with the data
-        updateSummaryDisplay(message.files);
+        if (retryWithLocal) {
+          // Request local summary as fallback
+          requestLocalSummaryData();
+        }
       }
-      
-      else if (message.type === 'firebase-config') {
-        console.log('Received Firebase config');
+    }
+
+    // Save data to Firebase
+    function saveDataToFirebase(data, userId, timestamp) {
+      try {
+        if (!firebaseInitialized || !firebaseDb) {
+          console.warn('Firebase not initialized, cannot save data');
+          updateFirebaseStatus('Firebase not ready, save failed', true);
+          return;
+        }
         
-        // Initialize Firebase with the config
-        initializeFirebase(message.config);
-      }
-      
-      else if (message.type === 'background-tracking-state') {
-        console.log('Background tracking state updated:', message.enabled);
+        console.log('Saving data to Firebase for user', userId);
+        updateFirebaseStatus('Saving to Firebase...');
         
-        // Update the UI
-        backgroundTracking = message.enabled;
-        updateBackgroundTrackingUI();
+        // Store in the timeData path with userId as the key
+        const timeDataRef = firebaseDb.ref('timeData/' + userId);
+        
+        timeDataRef.set(data)
+          .then(() => {
+            console.log('Data saved to Firebase successfully');
+            // Store the data in our local variable
+            summaryData = data;
+            updateFirebaseStatus('Data saved to Firebase');
+          })
+          .catch(error => {
+            console.error('Error saving to Firebase:', error);
+            updateFirebaseStatus('Firebase save error: ' + error.message, true);
+          });
+          
+        // Also save last sync timestamp
+        const syncRef = firebaseDb.ref('lastSync/' + userId);
+        syncRef.set(timestamp);
+      } catch (error) {
+        console.error('Error in saveDataToFirebase:', error);
+        updateFirebaseStatus('Firebase error: ' + error.message, true);
       }
-      
-      else {
-        console.log('Unhandled message type:', message.type);
+    }
+
+    // Update Firebase status display
+    function updateFirebaseStatus(message, isError = false) {
+      const statusElement = document.getElementById('firebase-status');
+      if (statusElement) {
+        statusElement.textContent = message;
+        statusElement.style.color = isError ? 'red' : 'green';
+        
+        // Clear status after some time if it's not an error
+        if (!isError) {
+          setTimeout(() => {
+            statusElement.textContent = '';
+          }, 5000);
+        }
       }
-    });
-  </script>
+    }
+</script>
 </body>
 </html>
 
