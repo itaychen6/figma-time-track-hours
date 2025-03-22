@@ -1,0 +1,25 @@
+{
+  "users": {
+    "user_123456789": {
+      "project1": {
+        "entry1": {
+          "startTime": 1648034400000,
+          "endTime": 1648038000000,
+          "duration": 3600
+        },
+        "entry2": {
+          "startTime": 1648120800000,
+          "endTime": 1648124400000,
+          "duration": 3600
+        }
+      },
+      "project2": {
+        "entry3": {
+          "startTime": 1648207200000,
+          "endTime": 1648214400000,
+          "duration": 7200
+        }
+      }
+    }
+  }
+} 

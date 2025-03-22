@@ -1,0 +1,1721 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Figma Time Tracker</title>
+  <style>
+    body {
+      font-family: 'Inter', sans-serif;
+      margin: 0;
+      padding: 0;
+      background-color: #fff;
+      color: #333;
+    }
+    
+    .container {
+      padding: 16px;
+    }
+    
+    /* Tabs */
+    .tabs {
+      display: flex;
+      border-bottom: 1px solid #ddd;
+      margin-bottom: 16px;
+    }
+    
+    .tab-button {
+      padding: 8px 16px;
+      border: none;
+      background: none;
+      cursor: pointer;
+      font-weight: 500;
+      color: #666;
+    }
+    
+    .tab-button.active {
+      color: #000;
+      border-bottom: 2px solid #000;
+    }
+    
+    .tab-content {
+      display: none;
+      margin-top: 16px;
+    }
+    
+    .tab-content.active {
+      display: block;
+    }
+    
+    /* Timer */
+    .timer-section {
+      text-align: center;
+      margin-bottom: 24px;
+    }
+    
+    .timer-display {
+      font-size: 36px;
+      font-weight: bold;
+      margin: 16px 0;
+      position: relative;
+      display: inline-block;
+    }
+    
+    #timer-dot {
+      position: absolute;
+      top: 0;
+      right: -12px;
+      width: 8px;
+      height: 8px;
+      background-color: #ff3b30;
+      border-radius: 50%;
+      display: none;
+    }
+    
+    .file-info {
+      margin-bottom: 16px;
+      text-align: center;
+    }
+    
+    #file-name {
+      font-weight: bold;
+      font-size: 16px;
+      margin-bottom: 4px;
+    }
+    
+    #page-name {
+      color: #666;
+      font-size: 14px;
+    }
+    
+    /* Buttons */
+    .control-buttons {
+      display: flex;
+      justify-content: center;
+      gap: 16px;
+      margin-bottom: 24px;
+    }
+    
+    button {
+      padding: 8px 16px;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+      font-weight: 500;
+      transition: background-color 0.2s;
+    }
+    
+    #start-button {
+      background-color: #34c759;
+      color: white;
+    }
+    
+    #stop-button {
+      background-color: #ff3b30;
+      color: white;
+      display: none;
+    }
+    
+    /* Settings */
+    .settings-section {
+      margin-bottom: 24px;
+    }
+    
+    .setting-item {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 12px 0;
+      border-bottom: 1px solid #eee;
+    }
+    
+    .setting-label {
+      font-weight: 500;
+    }
+    
+    /* Files list */
+    .files-list {
+      margin-top: 24px;
+    }
+    
+    .file-item {
+      padding: 12px;
+      border-bottom: 1px solid #eee;
+      display: flex;
+      justify-content: space-between;
+    }
+    
+    .file-item-name {
+      font-weight: 500;
+    }
+    
+    .file-item-time {
+      color: #666;
+    }
+    
+    /* Summary tab */
+    #summary-tab {
+      position: relative;
+    }
+    
+    #summary-loading {
+      text-align: center;
+      margin: 20px 0;
+      color: #666;
+      font-style: italic;
+    }
+    
+    .summary-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 16px;
+      padding-bottom: 8px;
+      border-bottom: 1px solid #eee;
+    }
+    
+    .summary-title {
+      font-size: 18px;
+      font-weight: bold;
+    }
+    
+    .summary-refresh button {
+      background-color: #007aff;
+      color: white;
+      padding: 6px 12px;
+      font-size: 12px;
+    }
+    
+    .summary-list {
+      margin-bottom: 24px;
+    }
+    
+    .summary-file-entry {
+      display: flex;
+      justify-content: space-between;
+      padding: 12px 0;
+      border-bottom: 1px solid #f0f0f0;
+    }
+    
+    .summary-file-name {
+      font-weight: 500;
+    }
+    
+    .summary-file-time {
+      font-family: monospace;
+    }
+    
+    .summary-total {
+      display: flex;
+      justify-content: space-between;
+      padding: 16px 0;
+      border-top: 2px solid #ddd;
+      margin-top: 8px;
+    }
+    
+    .summary-total-label {
+      font-weight: bold;
+    }
+    
+    .summary-total-time {
+      font-family: monospace;
+      font-weight: bold;
+    }
+    
+    .no-data {
+      text-align: center;
+      color: #666;
+      margin: 40px 0;
+    }
+    
+    .error {
+      color: #ff3b30;
+      text-align: center;
+      margin: 20px 0;
+    }
+    
+    .summary-retry-button, .summary-refresh-button {
+      display: block;
+      margin: 16px auto;
+      background-color: #007aff;
+      color: white;
+    }
+    
+    /* Firebase status */
+    #firebase-status {
+      text-align: center;
+      font-size: 12px;
+      margin-top: 20px;
+      min-height: 16px;
+    }
+    
+    /* Toggle switch */
+    .switch {
+      position: relative;
+      display: inline-block;
+      width: 44px;
+      height: 24px;
+    }
+    
+    .switch input {
+      opacity: 0;
+      width: 0;
+      height: 0;
+    }
+    
+    .slider {
+      position: absolute;
+      cursor: pointer;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background-color: #ccc;
+      transition: .4s;
+      border-radius: 24px;
+    }
+    
+    .slider:before {
+      position: absolute;
+      content: "";
+      height: 16px;
+      width: 16px;
+      left: 4px;
+      bottom: 4px;
+      background-color: white;
+      transition: .4s;
+      border-radius: 50%;
+    }
+    
+    input:checked + .slider {
+      background-color: #2196F3;
+    }
+    
+    input:checked + .slider:before {
+      transform: translateX(20px);
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <!-- Tabs -->
+    <div class="tabs">
+      <button class="tab-button active" data-tab="tracking-tab">Tracking</button>
+      <button class="tab-button" data-tab="summary-tab">Summary</button>
+      <button class="tab-button" data-tab="settings-tab">Settings</button>
+    </div>
+    
+    <!-- Tracking Tab -->
+    <div id="tracking-tab" class="tab-content active">
+      <!-- Timer Display -->
+      <div class="timer-section">
+        <div class="timer-display">
+          <span id="timer">00:00:00</span>
+          <div id="timer-dot"></div>
+        </div>
+        <div id="tracking-status" class="status-inactive">Not Tracking</div>
+      </div>
+      
+      <!-- File Info -->
+      <div class="file-info">
+        <div id="file-name">No file selected</div>
+        <div id="page-name"></div>
+      </div>
+      
+      <!-- Control Buttons -->
+      <div class="control-buttons">
+        <button id="start-button">Start Tracking</button>
+        <button id="stop-button">Stop Tracking</button>
+      </div>
+      
+      <!-- Files List -->
+      <div class="files-list" id="files-list">
+        <!-- Files will be added here dynamically -->
+      </div>
+    </div>
+    
+    <!-- Summary Tab -->
+    <div id="summary-tab" class="tab-content">
+      <div id="summary-loading"></div>
+      <div id="summary-container">
+        <!-- Summary data will be loaded here -->
+      </div>
+    </div>
+    
+    <!-- Settings Tab -->
+    <div id="settings-tab" class="tab-content">
+      <div class="settings-section">
+        <div class="setting-item">
+          <div class="setting-label">Background Tracking</div>
+          <label class="switch">
+            <input type="checkbox" id="background-tracking" checked>
+            <span class="slider"></span>
+          </label>
+        </div>
+        <p class="setting-description">
+          When enabled, tracking continues even when switching between files.
+        </p>
+        
+        <div class="setting-item">
+          <div class="setting-label">Firebase Sync</div>
+          <div>
+            <button id="sync-to-firebase">Save to Firebase</button>
+            <button id="sync-from-firebase">Load from Firebase</button>
+          </div>
+        </div>
+        
+        <div id="firebase-status"></div>
+      </div>
+    </div>
+  </div>
+  
+  <!-- Firebase SDK -->
+  <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-auth.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-database.js"></script>
+
+  <script>
+    // Firebase variables
+    let firebaseConfig = null;
+    let firebaseInitialized = false;
+    let userId = null;
+    let files = {};
+    let activeFileId = null;
+    let activePage = null;
+    let isTracking = false;
+    let timerInterval = null;
+    let startTime = null;
+    let updateTimerInterval = null;
+    let summaryLoaded = false;
+    let activeFileName = null;
+    let activePageName = null;
+    let backgroundTracking = true;
+
+    // Initialize Firebase when config is received
+    function initializeFirebase(config) {
+      try {
+        console.log('Initializing Firebase with config:', config);
+        firebaseConfig = config;
+        
+        // Initialize Firebase app if not already initialized
+        if (!firebase.apps.length) {
+          firebase.initializeApp(firebaseConfig);
+        }
+        
+        // Set up anonymous authentication
+        firebase.auth().onAuthStateChanged((user) => {
+          if (user) {
+            console.log('Firebase auth state changed: user signed in', user.uid);
+            // User is signed in
+            userId = user.uid;
+            
+            // Notify plugin that Firebase is initialized
+            parent.postMessage({ pluginMessage: { type: 'firebase-init-complete' } }, '*');
+            
+            firebaseInitialized = true;
+            
+            // Check if we should load the summary tab data right away
+            checkSummaryTabAndLoadData();
+          } else {
+            console.log('Firebase auth state changed: no user signed in');
+            // User is signed out, sign in anonymously
+            firebase.auth().signInAnonymously()
+              .then(() => {
+                console.log('Signed in anonymously to Firebase');
+              })
+              .catch((error) => {
+                console.error('Error signing in anonymously:', error);
+                handleFirebaseError(error);
+              });
+          }
+        });
+      } catch (error) {
+        console.error('Error initializing Firebase:', error);
+        handleFirebaseError(error);
+      }
+    }
+    
+    // Handle Firebase errors gracefully
+    function handleFirebaseError(error) {
+      console.error('Firebase error:', error);
+      
+      // Notify the plugin about the error
+      parent.postMessage({ pluginMessage: { 
+        type: 'firebase-error', 
+        error: error.message || 'Unknown Firebase error'
+      } }, '*');
+      
+      // Show error in UI
+      document.getElementById('firebase-status').textContent = 'Firebase Error: ' + (error.message || 'Unknown error');
+      document.getElementById('firebase-status').style.color = 'red';
+      
+      // If we're on the summary tab, load summary from local data
+      if (document.getElementById('summary-tab').classList.contains('active')) {
+        loadSummaryFromLocal();
+      }
+    }
+    
+    // Check if summary tab is active and load data if needed
+    function checkSummaryTabAndLoadData() {
+      // If summary tab is active and data hasn't been loaded yet
+      if (document.getElementById('summary-tab').classList.contains('active') && !summaryLoaded) {
+        console.log('Summary tab is active, requesting immediate data');
+        // Request summary data from plugin
+        parent.postMessage({ pluginMessage: { 
+          type: 'get-summary',
+          immediate: true
+        } }, '*');
+      }
+    }
+
+    // Save data to Firebase
+    function saveToFirebase(data, userId) {
+      if (!firebaseInitialized) {
+        console.error('Firebase not initialized yet, cannot save data');
+        return;
+      }
+      
+      try {
+        console.log('Saving data to Firebase for user:', userId);
+        const dbRef = firebase.database().ref('users/' + userId + '/files');
+        
+        // Use set to completely replace the data
+        dbRef.set(data)
+          .then(() => {
+            console.log('Data saved to Firebase successfully');
+            document.getElementById('firebase-status').textContent = 'Data synced to Firebase';
+            document.getElementById('firebase-status').style.color = 'green';
+            
+            // Clear status message after 3 seconds
+            setTimeout(() => {
+              document.getElementById('firebase-status').textContent = '';
+            }, 3000);
+          })
+          .catch((error) => {
+            console.error('Error saving data to Firebase:', error);
+            handleFirebaseError(error);
+          });
+      } catch (error) {
+        console.error('Error in saveToFirebase:', error);
+        handleFirebaseError(error);
+      }
+    }
+
+    // Load data from Firebase
+    function loadFromFirebase(userId, retryWithLocal = true) {
+      if (!firebaseInitialized) {
+        console.error('Firebase not initialized yet, cannot load data');
+        
+        if (retryWithLocal) {
+          console.log('Loading summary from local data instead');
+          loadSummaryFromLocal();
+        }
+        return;
+      }
+      
+      try {
+        console.log('Loading data from Firebase for user:', userId);
+        document.getElementById('summary-loading').textContent = 'Loading data from Firebase...';
+        
+        const dbRef = firebase.database().ref('users/' + userId + '/files');
+        
+        dbRef.once('value')
+          .then((snapshot) => {
+            const data = snapshot.val();
+            
+            if (data) {
+              console.log('Data loaded from Firebase:', data);
+              
+              // Send data to plugin
+              parent.postMessage({ pluginMessage: { 
+                type: 'firebase-data-loaded',
+                data: data
+              } }, '*');
+              
+              // Update UI with data
+              updateSummaryDisplay(data);
+              summaryLoaded = true;
+              
+              document.getElementById('firebase-status').textContent = 'Data loaded from Firebase';
+              document.getElementById('firebase-status').style.color = 'green';
+              
+              // Clear status message after 3 seconds
+              setTimeout(() => {
+                document.getElementById('firebase-status').textContent = '';
+              }, 3000);
+            } else {
+              console.log('No data found in Firebase');
+              
+              if (retryWithLocal) {
+                console.log('Loading summary from local data instead');
+                loadSummaryFromLocal();
+              }
+              
+              // Notify plugin no data was found
+              parent.postMessage({ pluginMessage: { 
+                type: 'firebase-data-loaded',
+                data: {}
+              } }, '*');
+            }
+          })
+          .catch((error) => {
+            console.error('Error loading data from Firebase:', error);
+            handleFirebaseError(error);
+            
+            if (retryWithLocal) {
+              console.log('Loading summary from local data instead');
+              loadSummaryFromLocal();
+            }
+          });
+      } catch (error) {
+        console.error('Error in loadFromFirebase:', error);
+        handleFirebaseError(error);
+        
+        if (retryWithLocal) {
+          console.log('Loading summary from local data instead');
+          loadSummaryFromLocal();
+        }
+      }
+    }
+
+    // Load summary from local data
+    function loadSummaryFromLocal() {
+      console.log('Requesting local summary data');
+      document.getElementById('summary-loading').textContent = 'Loading from local data...';
+      
+      // Request summary data from plugin
+      parent.postMessage({ pluginMessage: { 
+        type: 'get-summary',
+        immediate: true
+      } }, '*');
+    }
+
+    // Update file info display
+    function updateFileInfo(fileName, pageName) {
+      console.log('Updating file info:', { fileName, pageName });
+      
+      // Update file name display
+      const fileNameElement = document.getElementById('file-name');
+      if (fileNameElement) {
+        fileNameElement.textContent = fileName || 'Not selected';
+      }
+      
+      // Update page name display
+      const pageNameElement = document.getElementById('page-name');
+      if (pageNameElement) {
+        pageNameElement.textContent = pageName || 'Not selected';
+      }
+    }
+    
+    // Format time in HH:MM:SS
+    function formatTime(seconds) {
+      const hours = Math.floor(seconds / 3600);
+      const minutes = Math.floor((seconds % 3600) / 60);
+      const secs = seconds % 60;
+      
+      return `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+    }
+    
+    // Format time for display (converts to hours, minutes, seconds)
+    function formatTimeDisplay(seconds) {
+      if (seconds < 60) {
+        return `${seconds}s`;
+      } else if (seconds < 3600) {
+        const minutes = Math.floor(seconds / 60);
+        return `${minutes}m`;
+      } else {
+        const hours = Math.floor(seconds / 3600);
+        const minutes = Math.floor((seconds % 3600) / 60);
+        return `${hours}h ${minutes}m`;
+      }
+    }
+    
+    // Update timer display based on tracking status
+    function updateTimerDisplay(tracking, startTime) {
+      console.log('Updating timer display:', { tracking, startTime });
+      
+      isTracking = tracking;
+      
+      // Clear any existing timer interval
+      if (updateTimerInterval) {
+        clearInterval(updateTimerInterval);
+        updateTimerInterval = null;
+      }
+      
+      if (tracking && startTime) {
+        // Store tracking start time
+        trackingStartTime = startTime;
+        
+        // Start updating the timer every second
+        updateTimerInterval = setInterval(() => {
+          const now = Date.now();
+          const elapsed = now - trackingStartTime;
+          const seconds = Math.floor(elapsed / 1000);
+          document.getElementById('timer').textContent = formatTime(seconds);
+        }, 1000);
+        
+        // Update initial time
+        const initialElapsed = Date.now() - startTime;
+        const initialSeconds = Math.floor(initialElapsed / 1000);
+        document.getElementById('timer').textContent = formatTime(initialSeconds);
+        
+        // Show the timer dot as active
+        document.getElementById('timer-dot').style.display = 'block';
+        
+        // Update status text
+        document.getElementById('status-text').textContent = 'Currently tracking';
+        document.getElementById('status-text').className = 'status-active';
+        
+        // Update button visibility
+        document.getElementById('toggle-timer').style.display = 'none';
+        document.getElementById('save-time').style.display = 'inline-block';
+      } else {
+        // Reset the timer display
+        document.getElementById('timer').textContent = '00:00:00';
+        
+        // Hide the timer dot
+        document.getElementById('timer-dot').style.display = 'none';
+        
+        // Update status text
+        document.getElementById('status-text').textContent = 'Not tracking';
+        document.getElementById('status-text').className = '';
+        
+        // Update button visibility
+        document.getElementById('toggle-timer').style.display = 'inline-block';
+        document.getElementById('save-time').style.display = 'none';
+      }
+    }
+    
+    // Update the file list display with unified view across all files
+    function updateFileList(files, currentActiveFileId) {
+      const filesContainer = document.getElementById('files-container');
+      filesContainer.innerHTML = '';
+      
+      // Store all files for future reference
+      allFiles = files || [];
+      
+      // Update the active file ID
+      if (currentActiveFileId) {
+        activeFileId = currentActiveFileId;
+      }
+      
+      console.log('Updating file list:', { 
+        filesCount: allFiles.length, 
+        activeFileId: activeFileId 
+      });
+      
+      if (!allFiles || allFiles.length === 0) {
+        filesContainer.innerHTML = '<div>No files tracked yet</div>';
+        return;
+      }
+      
+      // Add a summary header
+      const summaryHeader = document.createElement('div');
+      summaryHeader.className = 'summary-title';
+      summaryHeader.textContent = 'Time Summary (All Files)';
+      filesContainer.appendChild(summaryHeader);
+      
+      // Sort files with active file first, then by total time (most time first)
+      const sortedFiles = [...allFiles].sort((a, b) => {
+        // Active file always first
+        if (a.id === activeFileId) return -1;
+        if (b.id === activeFileId) return 1;
+        
+        // Then by total time
+        return b.totalTime - a.totalTime;
+      });
+      
+      // Calculate total time across all files
+      const totalTimeAllFiles = sortedFiles.reduce((total, file) => total + file.totalTime, 0);
+      
+      // Add total time summary
+      if (totalTimeAllFiles > 0) {
+        const totalTimeElement = document.createElement('div');
+        totalTimeElement.className = 'total-time-summary';
+        totalTimeElement.innerHTML = `
+          <div class="total-label">Total Time Tracked:</div>
+          <div class="total-value">${formatTime(Math.floor(totalTimeAllFiles / 1000))}</div>
+        `;
+        filesContainer.appendChild(totalTimeElement);
+      }
+      
+      // Create file cards
+      sortedFiles.forEach(file => {
+        const isCurrentlyActive = file.id === activeFileId;
+        
+        const fileCard = document.createElement('div');
+        fileCard.className = `file-card ${isCurrentlyActive ? 'active' : ''}`;
+        
+        const fileHeader = document.createElement('div');
+        fileHeader.className = 'file-header';
+        
+        const fileName = document.createElement('div');
+        fileName.className = 'file-name';
+        
+        // Add indicator for active file
+        if (isCurrentlyActive) {
+          const activeIndicator = document.createElement('span');
+          activeIndicator.className = 'active-indicator';
+          fileName.appendChild(activeIndicator);
+        }
+        
+        const fileNameText = document.createElement('span');
+        fileNameText.textContent = file.name;
+        fileName.appendChild(fileNameText);
+        
+        const fileTime = document.createElement('div');
+        fileTime.className = 'file-time';
+        fileTime.textContent = formatTime(Math.floor(file.totalTime / 1000));
+        
+        fileHeader.appendChild(fileName);
+        fileHeader.appendChild(fileTime);
+        fileCard.appendChild(fileHeader);
+        
+        // Create page list if it has pages
+        if (file.pages && Object.keys(file.pages).length > 0) {
+          const pagesList = document.createElement('div');
+          pagesList.className = 'pages-list';
+          
+          // Convert pages object to array and sort by tracked time
+          const pagesArray = Object.values(file.pages);
+          const sortedPages = [...pagesArray].sort((a, b) => {
+            // Active page always first
+            if (a.id === activePageId) return -1;
+            if (b.id === activePageId) return 1;
+            
+            // Then by tracked time
+            return b.totalTime - a.totalTime;
+          });
+          
+          let hasPages = false;
+          sortedPages.forEach(page => {
+            // Skip pages with no tracked time unless they're active
+            if (page.totalTime === 0 && page.id !== activePageId) return;
+            hasPages = true;
+            
+            const pageRow = document.createElement('div');
+            pageRow.className = `page-row ${page.id === activePageId ? 'active' : ''}`;
+            
+            const pageName = document.createElement('div');
+            pageName.className = 'page-name';
+            
+            // Add indicator for active page
+            if (page.id === activePageId) {
+              const activeIndicator = document.createElement('span');
+              activeIndicator.textContent = '• ';
+              activeIndicator.style.color = '#18a0fb';
+              pageName.appendChild(activeIndicator);
+            }
+            
+            const pageNameText = document.createElement('span');
+            pageNameText.textContent = page.name;
+            pageName.appendChild(pageNameText);
+            
+            const pageTime = document.createElement('div');
+            pageTime.className = 'page-time';
+            pageTime.textContent = formatTime(Math.floor(page.totalTime / 1000));
+            
+            pageRow.appendChild(pageName);
+            pageRow.appendChild(pageTime);
+            pagesList.appendChild(pageRow);
+          });
+          
+          if (hasPages) {
+            fileCard.appendChild(pagesList);
+          }
+        }
+        
+        filesContainer.appendChild(fileCard);
+      });
+    }
+    
+    // Update the UI when we receive all files data
+    function handleAllFilesData(data) {
+      if (!data.files) return;
+      
+      // Update the file list with all files data
+      updateFileList(data.files, data.activeFileId);
+      
+      // Update any other UI elements that need all files data
+      updateTotalTimeDisplay(data.files);
+    }
+
+    // Calculate and display total time across all files
+    function updateTotalTimeDisplay(files) {
+      if (!files || !files.length) return;
+      
+      // Calculate total time
+      const totalSeconds = files.reduce((total, file) => {
+        return total + Math.floor(file.totalTime / 1000);
+      }, 0);
+      
+      // Update total time display if it exists
+      const totalTimeElement = document.querySelector('.total-time-display');
+      if (totalTimeElement) {
+        totalTimeElement.textContent = formatTime(totalSeconds);
+      }
+    }
+
+    // Update summary display
+    function updateSummaryDisplay(filesData) {
+      try {
+        console.log('Updating summary display with data:', filesData);
+        
+        // Get the summary container
+        const summaryContainer = document.getElementById('summary-container');
+        
+        // Clear previous content
+        summaryContainer.innerHTML = '';
+        
+        // Hide loading message
+        document.getElementById('summary-loading').textContent = '';
+        
+        // Check if we have data
+        if (!filesData || Object.keys(filesData).length === 0) {
+          console.log('No files data available for summary');
+          summaryContainer.innerHTML = '<p class="no-data">No tracking data available yet</p>';
+          
+          // Add a refresh button
+          const refreshButton = document.createElement('button');
+          refreshButton.textContent = 'Refresh Summary';
+          refreshButton.className = 'summary-refresh-button';
+          refreshButton.onclick = () => {
+            console.log('Manual summary refresh requested');
+            document.getElementById('summary-loading').textContent = 'Refreshing summary...';
+            parent.postMessage({ pluginMessage: { type: 'get-summary', immediate: true } }, '*');
+          };
+          summaryContainer.appendChild(refreshButton);
+          
+          return;
+        }
+        
+        // Create summary header
+        const header = document.createElement('div');
+        header.className = 'summary-header';
+        header.innerHTML = `
+          <div class="summary-title">Summary</div>
+          <div class="summary-refresh">
+            <button id="refresh-summary">Refresh</button>
+          </div>
+        `;
+        summaryContainer.appendChild(header);
+        
+        // Add refresh functionality
+        document.getElementById('refresh-summary').addEventListener('click', () => {
+          console.log('Manual summary refresh requested');
+          document.getElementById('summary-loading').textContent = 'Refreshing summary...';
+          parent.postMessage({ pluginMessage: { type: 'get-summary', immediate: true } }, '*');
+        });
+        
+        // Create summary list
+        const summaryList = document.createElement('div');
+        summaryList.className = 'summary-list';
+        
+        // Track total time across all files
+        let totalSeconds = 0;
+        
+        // Process each file
+        Object.values(filesData).forEach((file) => {
+          try {
+            // Skip files with no time tracked
+            if (!file.totalSeconds || file.totalSeconds === 0) {
+              return;
+            }
+            
+            totalSeconds += file.totalSeconds;
+            
+            // Create file entry
+            const fileEntry = document.createElement('div');
+            fileEntry.className = 'summary-file-entry';
+            
+            // Format the time
+            const hours = Math.floor(file.totalSeconds / 3600);
+            const minutes = Math.floor((file.totalSeconds % 3600) / 60);
+            const seconds = file.totalSeconds % 60;
+            
+            const formattedTime = `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
+            
+            // Set the content
+            fileEntry.innerHTML = `
+              <div class="summary-file-name">${file.name || 'Unnamed File'}</div>
+              <div class="summary-file-time">${formattedTime}</div>
+            `;
+            
+            // Add the entry to the list
+            summaryList.appendChild(fileEntry);
+          } catch (fileError) {
+            console.error('Error processing file in summary:', fileError);
+          }
+        });
+        
+        // Add the list to the container
+        summaryContainer.appendChild(summaryList);
+        
+        // Add total time
+        const totalTimeElement = document.createElement('div');
+        totalTimeElement.className = 'summary-total';
+        
+        // Format total time
+        const totalHours = Math.floor(totalSeconds / 3600);
+        const totalMinutes = Math.floor((totalSeconds % 3600) / 60);
+        const totalSecs = totalSeconds % 60;
+        
+        const formattedTotal = `${totalHours.toString().padStart(2, '0')}:${totalMinutes.toString().padStart(2, '0')}:${totalSecs.toString().padStart(2, '0')}`;
+        
+        totalTimeElement.innerHTML = `
+          <div class="summary-total-label">Total Time:</div>
+          <div class="summary-total-time">${formattedTotal}</div>
+        `;
+        
+        summaryContainer.appendChild(totalTimeElement);
+        
+        console.log('Summary display updated successfully');
+        
+      } catch (error) {
+        console.error('Error updating summary display:', error);
+        
+        // Show error in the summary container
+        const summaryContainer = document.getElementById('summary-container');
+        summaryContainer.innerHTML = `<p class="error">Error displaying summary: ${error.message}</p>`;
+        
+        // Add a retry button
+        const retryButton = document.createElement('button');
+        retryButton.textContent = 'Retry';
+        retryButton.className = 'summary-retry-button';
+        retryButton.onclick = () => {
+          parent.postMessage({ pluginMessage: { type: 'get-summary', immediate: true } }, '*');
+        };
+        summaryContainer.appendChild(retryButton);
+      }
+    }
+
+    // Show error message
+    function showErrorMessage(message) {
+      const errorContainer = document.getElementById('error-container');
+      errorContainer.textContent = message;
+      errorContainer.style.display = 'block';
+      
+      // Hide after 5 seconds
+      setTimeout(() => {
+        errorContainer.style.display = 'none';
+      }, 5000);
+    }
+    
+    // Listen for messages from the plugin
+    window.onmessage = (event) => {
+      const message = event.data.pluginMessage;
+      if (!message) return;
+
+      console.log('Message received from plugin:', message.type);
+      
+      // Handle different message types
+      if (message.type === 'firebase-config') {
+        console.log('Received Firebase config');
+        
+        // Store user ID
+        if (message.userId) {
+          userId = message.userId;
+          console.log('User ID set:', userId);
+        }
+        
+        // Initialize Firebase with the config
+        initializeFirebase(message.config);
+      } 
+      
+      else if (message.type === 'tracking-status') {
+        console.log('Received tracking status:', message.isTracking);
+        
+        // Update tracking variables
+        isTracking = message.isTracking;
+        activeFileName = message.fileName;
+        activePageName = message.pageName;
+        backgroundTracking = message.backgroundTracking;
+        
+        // Update UI elements
+        updateTrackingUI();
+        updateTimerDisplay();
+        updateBackgroundTrackingUI();
+        
+        // Display active file/page names
+        updateFileInfo();
+      } 
+      
+      else if (message.type === 'file-changed') {
+        console.log('File changed notification received');
+        
+        // Update active file and page
+        activeFileId = message.fileId;
+        activePage = message.pageId;
+        activeFileName = message.fileName;
+        activePageName = message.pageName;
+        
+        // Update file name in UI
+        updateFileInfo();
+        
+        // If resetTimer flag is present, ensure the timer is reset
+        if (message.resetTimer) {
+          console.log('Resetting timer display due to file change');
+          resetTimerDisplay();
+        }
+      } 
+      
+      else if (message.type === 'files-updated') {
+        console.log('Files data updated');
+        
+        // Store files data
+        files = message.files;
+        activeFileId = message.activeFileId;
+        activePage = message.activePage;
+        
+        // Update file list
+        updateFilesList();
+      } 
+      
+      else if (message.type === 'update-summary') {
+        console.log('Received summary update', message.immediate ? '(immediate)' : '');
+        
+        // Update summary display with files data
+        updateSummaryDisplay(message.files);
+        summaryLoaded = true;
+        
+        // Hide loading message
+        document.getElementById('summary-loading').textContent = '';
+      } 
+      
+      else if (message.type === 'save-to-firebase') {
+        console.log('Saving data to Firebase');
+        
+        // Save data to Firebase
+        saveToFirebase(message.files, message.userId);
+      } 
+      
+      else if (message.type === 'load-from-firebase') {
+        console.log('Loading data from Firebase');
+        
+        // Load data from Firebase
+        loadFromFirebase(message.userId);
+      }
+    };
+
+    // Reset the timer display
+    function resetTimerDisplay() {
+      // Clear any existing interval
+      if (updateTimerInterval) {
+        clearInterval(updateTimerInterval);
+        updateTimerInterval = null;
+      }
+      
+      // Reset timer text
+      document.getElementById('timer').textContent = '00:00:00';
+      
+      // Hide timer dot since we're no longer tracking
+      document.getElementById('timer-dot').style.display = 'none';
+      
+      // Update button visibility
+      document.getElementById('start-button').style.display = 'block';
+      document.getElementById('stop-button').style.display = 'none';
+      
+      console.log('Timer display reset');
+    }
+
+    // Update the timer display
+    function updateTimerDisplay() {
+      // Clear any existing timer interval
+      if (updateTimerInterval) {
+        clearInterval(updateTimerInterval);
+        updateTimerInterval = null;
+      }
+      
+      // Get the timer element
+      const timerElement = document.getElementById('timer');
+      
+      if (isTracking) {
+        console.log('Updating timer for active tracking');
+        
+        // Show the timer dot to indicate active tracking
+        document.getElementById('timer-dot').style.display = 'inline-block';
+        
+        // Show the appropriate buttons
+        document.getElementById('stop-button').style.display = 'block';
+        document.getElementById('start-button').style.display = 'none';
+        
+        // Set the start time if it's not already set
+        if (!startTime) {
+          startTime = Date.now();
+        }
+        
+        // Update timer immediately
+        updateTimerText();
+        
+        // Set up interval to update timer
+        updateTimerInterval = setInterval(updateTimerText, 1000);
+      } else {
+        console.log('Updating timer for inactive state');
+        
+        // Hide the timer dot since we're not tracking
+        document.getElementById('timer-dot').style.display = 'none';
+        
+        // Show the appropriate buttons
+        document.getElementById('start-button').style.display = 'block';
+        document.getElementById('stop-button').style.display = 'none';
+        
+        // Reset the timer display
+        timerElement.textContent = '00:00:00';
+        startTime = null;
+      }
+    }
+
+    // Update the timer text
+    function updateTimerText() {
+      if (!isTracking || !startTime) return;
+      
+      const now = Date.now();
+      const elapsed = now - startTime;
+      
+      // Format the time as HH:MM:SS
+      const seconds = Math.floor(elapsed / 1000);
+      const minutes = Math.floor(seconds / 60);
+      const hours = Math.floor(minutes / 60);
+      
+      const formattedHours = hours.toString().padStart(2, '0');
+      const formattedMinutes = (minutes % 60).toString().padStart(2, '0');
+      const formattedSeconds = (seconds % 60).toString().padStart(2, '0');
+      
+      // Update the timer text
+      document.getElementById('timer').textContent = 
+        `${formattedHours}:${formattedMinutes}:${formattedSeconds}`;
+    }
+
+    // Update the file information display
+    function updateFileInfo() {
+      // Update file and page name displays
+      document.getElementById('file-name').textContent = activeFileName || 'No file';
+      document.getElementById('page-name').textContent = activePageName || 'No page';
+    }
+
+    // Update tracking UI
+    function updateTrackingUI() {
+      // Update the tracking status text
+      const statusElement = document.getElementById('tracking-status');
+      statusElement.textContent = isTracking ? 'Tracking' : 'Not Tracking';
+      statusElement.className = isTracking ? 'status-active' : 'status-inactive';
+    }
+
+    // Update background tracking UI
+    function updateBackgroundTrackingUI() {
+      // Update the background tracking toggle
+      document.getElementById('background-tracking').checked = backgroundTracking;
+    }
+
+    // Update the file list display
+    function updateFilesList() {
+      // Implementation of updateFilesList function
+    }
+
+    // Initialization function for the UI
+    function initializeUI() {
+      console.log('Initializing UI');
+      
+      // Hide the inactive notice initially
+      const inactiveNotice = document.getElementById('inactive-notice');
+      if (inactiveNotice) {
+        inactiveNotice.style.display = 'none';
+      }
+      
+      // Add global tracking toggle
+      addGlobalTrackingToggle();
+      
+      // Initialize the summary container
+      const summaryContainer = document.getElementById('summary-container');
+      if (summaryContainer) {
+        summaryContainer.innerHTML = '<div class="loading-summary">Loading summary data...</div>';
+        
+        // Request immediate summary data (will fallback to local if needed)
+        setTimeout(() => {
+          requestLocalSummaryData();
+        }, 500);
+      }
+    }
+    
+    // Run initialization when page loads
+    window.onload = () => {
+      // Initialize the UI
+      initializeUI();
+      
+      // Check if we're currently tracking and request all files data
+      parent.postMessage({ pluginMessage: { type: 'check-tracking-status' } }, '*');
+      requestAllFilesData();
+      
+      // Load summary data on initialization (after a short delay to ensure Firebase is initialized)
+      setTimeout(() => {
+        parent.postMessage({
+          pluginMessage: {
+            type: 'request-firebase-summary'
+          }
+        }, '*');
+        console.log('Requesting initial summary data');
+      }, 1000);
+    };
+
+    // Add a time entry to the UI
+    function addTimeEntry(timeEntry) {
+      // Add to recent entries array (limit to 10)
+      recentEntries.unshift(timeEntry);
+      if (recentEntries.length > 10) {
+        recentEntries.pop();
+      }
+      
+      // Update the UI
+      updateRecentEntries();
+    }
+    
+    // Update the recent entries display
+    function updateRecentEntries() {
+      const entriesContainer = document.getElementById('entries-container');
+      entriesContainer.innerHTML = '';
+      
+      if (recentEntries.length === 0) {
+        entriesContainer.innerHTML = '<div class="empty-state">No recent entries</div>';
+        return;
+      }
+      
+      recentEntries.forEach(entry => {
+        const date = new Date(entry.date).toLocaleDateString();
+        const startTime = new Date(entry.startTime).toLocaleTimeString();
+        const duration = formatDisplayTime(entry.duration);
+        
+        const entryElement = document.createElement('div');
+        entryElement.className = 'time-entry';
+        entryElement.innerHTML = `
+          <div class="time-entry-file">${entry.fileName}</div>
+          <div class="time-entry-details">
+            <div class="time-entry-page">${entry.pageName}</div>
+            <div class="time-entry-time">${date} at ${startTime}</div>
+          </div>
+          <div class="time-entry-duration">${duration}</div>
+        `;
+        
+        entriesContainer.appendChild(entryElement);
+      });
+    }
+
+    // Load recent entries from Firebase
+    function loadRecentEntriesFromFirebase(uid) {
+      if (!firebaseDb || !uid) return;
+      
+      try {
+        const entriesRef = firebaseDb.ref(`users/${uid}/timeEntries`);
+        
+        entriesRef.orderByChild('startTime')
+          .limitToLast(10)
+          .once('value')
+          .then(snapshot => {
+            const data = snapshot.val();
+            if (!data) {
+              console.log('No time entries found in Firebase');
+              return;
+            }
+            
+            // Convert object to array and sort by start time (descending)
+            recentEntries = Object.values(data)
+              .sort((a, b) => b.startTime - a.startTime);
+            
+            // Update the UI
+            updateRecentEntries();
+            
+            console.log(`Loaded ${recentEntries.length} recent time entries`);
+          })
+          .catch(error => {
+            console.error('Error loading time entries from Firebase:', error);
+          });
+      } catch (error) {
+        console.error('Error accessing Firebase for time entries:', error);
+      }
+    }
+
+    // Handle visibility changes
+    document.addEventListener('visibilitychange', function() {
+      const isVisible = !document.hidden;
+      console.log('Visibility changed:', isVisible ? 'visible' : 'hidden');
+      
+      // Send visibility state to the plugin
+      parent.postMessage({
+        pluginMessage: {
+          type: 'ui-visibility-changed',
+          isVisible: isVisible
+        }
+      }, '*');
+      
+      // If hidden, update UI to reflect that tracking might be paused
+      if (!isVisible && isTracking) {
+        updateTimerDisplay(false, null);
+      }
+    });
+
+    // Track user interactions with Figma UI
+    document.addEventListener('mousemove', debounce(function() {
+      // Only send if the document is visible
+      if (!document.hidden) {
+        parent.postMessage({
+          pluginMessage: {
+            type: 'user-interaction',
+            source: 'mouse'
+          }
+        }, '*');
+      }
+    }, 1000)); // Debounce to avoid too many messages
+
+    document.addEventListener('keydown', function() {
+      // Only send if the document is visible
+      if (!document.hidden) {
+        parent.postMessage({
+          pluginMessage: {
+            type: 'user-interaction',
+            source: 'keyboard'
+          }
+        }, '*');
+      }
+    });
+
+    document.addEventListener('click', function() {
+      // Only send if the document is visible
+      if (!document.hidden) {
+        parent.postMessage({
+          pluginMessage: {
+            type: 'user-interaction',
+            source: 'click'
+          }
+        }, '*');
+      }
+    });
+
+    // Track window focus/blur events to detect application switching
+    window.addEventListener('blur', function() {
+      console.log('Window lost focus');
+      parent.postMessage({
+        pluginMessage: {
+          type: 'ui-visibility-changed',
+          isVisible: false
+        }
+      }, '*');
+    });
+
+    window.addEventListener('focus', function() {
+      console.log('Window gained focus');
+      parent.postMessage({
+        pluginMessage: {
+          type: 'ui-visibility-changed',
+          isVisible: true
+        }
+      }, '*');
+    });
+
+    // Utility function to debounce events
+    function debounce(func, wait) {
+      let timeout;
+      return function() {
+        const context = this;
+        const args = arguments;
+        clearTimeout(timeout);
+        timeout = setTimeout(function() {
+          func.apply(context, args);
+        }, wait);
+      };
+    }
+
+    // Add a global tracking toggle to the UI
+    function addGlobalTrackingToggle() {
+      const container = document.querySelector('.container');
+      const statusDiv = document.querySelector('.status');
+      
+      // Create toggle element
+      const toggleDiv = document.createElement('div');
+      toggleDiv.className = 'global-tracking-toggle';
+      toggleDiv.innerHTML = `
+        <span class="toggle-label">Background Tracking</span>
+        <label class="toggle-switch">
+          <input type="checkbox" id="global-tracking-toggle" checked>
+          <span class="toggle-slider"></span>
+        </label>
+      `;
+      
+      // Insert after status div
+      if (statusDiv) {
+        statusDiv.after(toggleDiv);
+      } else {
+        container.prepend(toggleDiv);
+      }
+      
+      // Add event listener
+      const toggleInput = document.getElementById('global-tracking-toggle');
+      toggleInput.addEventListener('change', function() {
+        const isEnabled = this.checked;
+        
+        // Send message to plugin
+        parent.postMessage({
+          pluginMessage: {
+            type: 'toggle-global-tracking',
+            enabled: isEnabled
+          }
+        }, '*');
+        
+        // Update UI
+        document.getElementById('status-text').textContent = 
+          isEnabled ? 'Background tracking enabled' : 'Background tracking disabled';
+      });
+    }
+
+    // Set up tabs
+    document.addEventListener('DOMContentLoaded', () => {
+      // Set up tab switching
+      const tabButtons = document.querySelectorAll('.tab-button');
+      const tabContents = document.querySelectorAll('.tab-content');
+      
+      // Notify plugin that UI is loaded
+      parent.postMessage({ pluginMessage: { type: 'ui-loaded' } }, '*');
+      
+      // Set up visibility change detection
+      document.addEventListener('visibilitychange', () => {
+        const isVisible = !document.hidden;
+        console.log('Visibility changed:', isVisible ? 'visible' : 'hidden');
+        
+        // Notify plugin of visibility change
+        parent.postMessage({ 
+          pluginMessage: { 
+            type: 'ui-visibility-changed', 
+            isVisible: isVisible 
+          } 
+        }, '*');
+      });
+      
+      // Set up tab switching
+      tabButtons.forEach(button => {
+        button.addEventListener('click', () => {
+          // Remove active class from all buttons and content
+          tabButtons.forEach(btn => btn.classList.remove('active'));
+          tabContents.forEach(content => {
+            if (content) { // Make sure the element exists
+              content.classList.remove('active');
+            }
+          });
+          
+          // Add active class to clicked button
+          button.classList.add('active');
+          
+          // Get the tab ID
+          const tabId = button.getAttribute('data-tab');
+          
+          // Show the corresponding content
+          const content = document.getElementById(tabId);
+          if (content) {
+            content.classList.add('active');
+            
+            // If summary tab is selected, load summary data
+            if (tabId === 'summary-tab') {
+              console.log('Summary tab selected, checking if data needs to be loaded');
+              
+              // Show loading message
+              document.getElementById('summary-loading').textContent = 
+                'Generating summary from your tracked time...';
+              
+              // Wait a moment to ensure tab is visible
+              setTimeout(() => {
+                // Request immediate summary generation
+                console.log('Requesting immediate summary generation');
+                parent.postMessage({ 
+                  pluginMessage: { 
+                    type: 'get-summary',
+                    immediate: true
+                  } 
+                }, '*');
+              }, 100);
+            }
+          }
+        });
+      });
+      
+      // Set up start tracking button
+      document.getElementById('start-button').addEventListener('click', () => {
+        parent.postMessage({ pluginMessage: { type: 'start-tracking' } }, '*');
+      });
+      
+      // Set up stop tracking button
+      document.getElementById('stop-button').addEventListener('click', () => {
+        parent.postMessage({ pluginMessage: { type: 'stop-tracking' } }, '*');
+      });
+      
+      // Set up background tracking toggle
+      document.getElementById('background-tracking').addEventListener('change', (e) => {
+        const enabled = e.target.checked;
+        console.log('Background tracking toggled:', enabled);
+        parent.postMessage({ 
+          pluginMessage: { 
+            type: 'toggle-background-tracking', 
+            enabled: enabled 
+          } 
+        }, '*');
+      });
+      
+      // Set up manual sync buttons
+      document.getElementById('sync-to-firebase').addEventListener('click', () => {
+        console.log('Manual sync to Firebase requested');
+        parent.postMessage({ pluginMessage: { type: 'sync-to-firebase' } }, '*');
+      });
+      
+      document.getElementById('sync-from-firebase').addEventListener('click', () => {
+        console.log('Manual sync from Firebase requested');
+        parent.postMessage({ pluginMessage: { type: 'sync-from-firebase' } }, '*');
+      });
+      
+      // Activate the first tab by default
+      if (tabButtons.length > 0) {
+        tabButtons[0].click();
+      }
+    });
+
+    // Set up refresh summary button
+    document.getElementById('refresh-summary').addEventListener('click', () => {
+      const summaryContainer = document.getElementById('summary-container');
+      summaryContainer.innerHTML = '<div class="loading-summary">Loading summary data...</div>';
+      
+      // Request fresh data from plugin
+      parent.postMessage({
+        pluginMessage: {
+          type: 'request-firebase-summary'
+        }
+      }, '*');
+    });
+
+    // Set up sync with Firebase button
+    document.getElementById('sync-firebase').addEventListener('click', () => {
+      parent.postMessage({
+        pluginMessage: {
+          type: 'manual-firebase-sync'
+        }
+      }, '*');
+    });
+
+    // Set up export data button
+    document.getElementById('export-data').addEventListener('click', () => {
+      parent.postMessage({
+        pluginMessage: {
+          type: 'export-data'
+        }
+      }, '*');
+    });
+
+    // Set up global tracking toggle
+    document.getElementById('global-tracking-toggle').addEventListener('change', (e) => {
+      parent.postMessage({
+        pluginMessage: {
+          type: 'toggle-global-tracking',
+          enabled: e.target.checked
+        }
+      }, '*');
+    });
+
+    // Handle export data result
+    function handleExportDataResult(data) {
+      const { filesCsv, pagesCsv, entriesCsv } = data;
+      
+      // Function to create a downloadable file
+      function createDownloadLink(content, filename) {
+        const blob = new Blob([content], { type: 'text/csv' });
+        const url = URL.createObjectURL(blob);
+        
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = filename;
+        a.style.display = 'none';
+        document.body.appendChild(a);
+        a.click();
+        
+        setTimeout(() => {
+          document.body.removeChild(a);
+          URL.revokeObjectURL(url);
+        }, 100);
+      }
+      
+      // Create downloads for each CSV
+      try {
+        // Get current date for filename
+        const date = new Date().toISOString().split('T')[0];
+        
+        // Create downloads
+        createDownloadLink(filesCsv, `figma-time-files-${date}.csv`);
+        
+        // Short delay between downloads
+        setTimeout(() => {
+          createDownloadLink(pagesCsv, `figma-time-pages-${date}.csv`);
+          
+          setTimeout(() => {
+            createDownloadLink(entriesCsv, `figma-time-entries-${date}.csv`);
+            
+            // Show success message
+            showMessage('Files exported successfully!');
+          }, 200);
+        }, 200);
+      } catch (error) {
+        console.error('Error creating download links:', error);
+        showErrorMessage('Failed to download export files');
+      }
+    }
+    
+    // Show temporary success message
+    function showMessage(message, duration = 3000) {
+      const messageElement = document.createElement('div');
+      messageElement.className = 'success-message';
+      messageElement.textContent = message;
+      document.body.appendChild(messageElement);
+      
+      setTimeout(() => {
+        messageElement.classList.add('fade-out');
+        setTimeout(() => {
+          document.body.removeChild(messageElement);
+        }, 300);
+      }, duration);
+    }
+
+    // Add debugging for summary display issues
+    function logSummaryDebug(message, data) {
+      const debugElement = document.getElementById('summary-debug');
+      if (debugElement) {
+        const timestamp = new Date().toISOString().split('T')[1].split('.')[0];
+        const debugMsg = `[${timestamp}] ${message}`;
+        
+        let debugContent = debugElement.textContent || '';
+        if (debugContent) debugContent += '\n';
+        
+        if (data) {
+          const dataStr = typeof data === 'object' 
+            ? JSON.stringify(data, null, 2) 
+            : data.toString();
+          debugContent += `${debugMsg}\n${dataStr}`;
+        } else {
+          debugContent += debugMsg;
+        }
+        
+        // Limit debug length
+        if (debugContent.length > 2000) {
+          debugContent = debugContent.substring(debugContent.length - 2000);
+        }
+        
+        debugElement.textContent = debugContent;
+      }
+    }
+
+    // Check if summary tab is active and needs immediate data
+    function checkSummaryTabAndLoadData() {
+      // Check if summary tab is active
+      const summaryTab = document.querySelector('.tab-button[data-tab="summary"]');
+      const isSummaryActive = summaryTab && summaryTab.classList.contains('active');
+      
+      if (isSummaryActive) {
+        console.log('Summary tab is active, requesting immediate data');
+        // Generate summary from local data immediately
+        requestLocalSummaryData();
+      }
+    }
+  </script>
+</body>
+</html>
+

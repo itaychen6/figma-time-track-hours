@@ -1,0 +1,26 @@
+{
+  "name": "Hours 3",
+  "id": "1484938255035963929",
+  "api": "1.0.0",
+  "main": "code.js",
+  "capabilities": [],
+  "enableProposedApi": false,
+  "documentAccess": "dynamic-page",
+  "editorType": [
+    "figma",
+    "figjam",
+    "slides"
+  ],
+  "ui": "ui.html",
+  "permissions": ["currentuser"],
+  "networkAccess": {
+    "allowedDomains": [
+      "https://figma-time-track.firebaseapp.com",
+      "https://figma-time-track-default-rtdb.asia-southeast1.firebasedatabase.app",
+      "https://*.firebaseio.com",
+      "https://www.gstatic.com",
+      "https://identitytoolkit.googleapis.com",
+      "https://firebasestorage.googleapis.com"
+    ]
+  }
+}
