@@ -1456,7 +1456,7 @@
       // Initialize UI components
       initializeUI();
       
-      // Request immediate summary data
+      // Request immediate summary data (with a slight delay to ensure UI is ready)
       setTimeout(() => {
         parent.postMessage({ pluginMessage: { type: 'get-summary', immediate: true } }, '*');
       }, 500);
@@ -1464,17 +1464,40 @@
       // Notify plugin that UI is loaded
       parent.postMessage({ pluginMessage: { type: 'ui-loaded' } }, '*');
       
-      // Make sure the default tab is activated
-      const defaultTab = document.querySelector('.tab-button.active');
-      if (defaultTab) {
-        console.log('Setting initial active tab:', defaultTab.getAttribute('data-tab'));
-        defaultTab.click(); // Trigger the click event to properly initialize the tab
-      } else {
-        // If no tab is active by default, activate the first one
+      // Set the default tab or reactivate tabs (if already loaded with a cached state)
+      console.log('Activating first tab directly...');
+      const activeTab = document.querySelector('.tab-button.active');
+      
+      // If there's an active tab already, keep it active
+      if (activeTab) {
+        const tabId = activeTab.getAttribute('data-tab');
+        console.log('Using already active tab:', tabId);
+        const tabContent = document.getElementById(tabId);
+        if (tabContent) {
+          tabContent.classList.add('active');
+        }
+        
+        // If it's the summary tab, load summary data
+        if (tabId === 'summary-tab') {
+          // Load summary data from localStorage or memory
+          if (summaryData) {
+            console.log('Using existing summary data on load');
+            updateSummaryDisplay(summaryData);
+          } else {
+            const savedData = loadSummaryFromLocalStorage();
+            if (savedData) {
+              console.log('Using localStorage data on load');
+              summaryData = savedData;
+              updateSummaryDisplay(savedData);
+            }
+          }
+        }
+      } 
+      // Otherwise activate the first tab
+      else {
         const firstTab = document.querySelector('.tab-button');
         if (firstTab) {
-          console.log('No active tab found, activating first tab:', firstTab.getAttribute('data-tab'));
-          firstTab.click();
+          firstTab.click(); // This will trigger the click handler set up in DOMContentLoaded
         }
       }
     };
@@ -1754,6 +1777,98 @@
         }
       }
     }
+
+    // Set up tabs functionality
+    document.addEventListener('DOMContentLoaded', function() {
+      console.log('DOM loaded - setting up tab buttons');
+      
+      // Get tab buttons and add click listeners
+      const tabButtons = document.querySelectorAll('.tab-button');
+      
+      tabButtons.forEach(button => {
+        button.addEventListener('click', function() {
+          const tabId = this.getAttribute('data-tab');
+          console.log('Tab clicked:', tabId);
+          
+          // Remove active class from all buttons and contents
+          document.querySelectorAll('.tab-button').forEach(btn => {
+            btn.classList.remove('active');
+          });
+          
+          document.querySelectorAll('.tab-content').forEach(content => {
+            content.classList.remove('active');
+          });
+          
+          // Add active class to clicked button and corresponding content
+          this.classList.add('active');
+          
+          const content = document.getElementById(tabId);
+          if (content) {
+            content.classList.add('active');
+            
+            // Special handling for summary tab
+            if (tabId === 'summary-tab') {
+              console.log('Summary tab activated');
+              document.getElementById('summary-loading').textContent = 'Loading summary...';
+              
+              // Use stored data immediately if available
+              if (summaryData) {
+                console.log('Using stored summary data for immediate display');
+                updateSummaryDisplay(summaryData);
+              } else {
+                // Try loading from localStorage
+                const savedData = loadSummaryFromLocalStorage();
+                if (savedData) {
+                  console.log('Using localStorage data for immediate display');
+                  summaryData = savedData;
+                  updateSummaryDisplay(savedData);
+                }
+              }
+              
+              // Request fresh data
+              setTimeout(() => {
+                requestSummaryRefresh();
+              }, 200);
+            }
+          }
+        });
+      });
+      
+      // Set up other button event listeners
+      
+      // Start button
+      document.getElementById('start-button').addEventListener('click', function() {
+        parent.postMessage({ pluginMessage: { type: 'start-tracking' } }, '*');
+      });
+      
+      // Stop button
+      document.getElementById('stop-button').addEventListener('click', function() {
+        parent.postMessage({ pluginMessage: { type: 'stop-tracking' } }, '*');
+      });
+      
+      // Background tracking toggle
+      document.getElementById('background-tracking').addEventListener('change', function(e) {
+        const enabled = e.target.checked;
+        console.log('Background tracking toggled:', enabled);
+        parent.postMessage({ 
+          pluginMessage: { 
+            type: 'toggle-background-tracking', 
+            enabled: enabled 
+          }
+        }, '*');
+      });
+      
+      // Firebase sync buttons
+      document.getElementById('sync-to-firebase').addEventListener('click', function() {
+        console.log('Manual sync to Firebase requested');
+        parent.postMessage({ pluginMessage: { type: 'sync-to-firebase' } }, '*');
+      });
+      
+      document.getElementById('sync-from-firebase').addEventListener('click', function() {
+        console.log('Manual sync from Firebase requested');
+        parent.postMessage({ pluginMessage: { type: 'sync-from-firebase' } }, '*');
+      });
+    });
 </script>
 </body>
 </html>
