@@ -21,7 +21,8 @@
       "https://www.gstatic.com",
       "https://identitytoolkit.googleapis.com",
       "https://firebasestorage.googleapis.com",
-      "https://*.asia-southeast1.firebasedatabase.app"
+      "https://*.asia-southeast1.firebasedatabase.app",
+      "https://s-apse1b-nss-211.asia-southeast1.firebasedatabase.app"
     ]
   }
 }

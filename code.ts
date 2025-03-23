@@ -89,6 +89,7 @@ let files: { [fileId: string]: any } = {};
 let firebaseInitialized = false;
 let pagesLoaded = false;
 let pendingFirebaseDataRequest = false;
+let trackingStartTime = 0;
 
 // Plugin initialization
 figma.showUI(__html__, { width: 300, height: 460 });
@@ -297,6 +298,7 @@ function startTracking() {
   files[activeFileId].pages[activePage].entries.push(newEntry);
   files[activeFileId].lastTrackedTime = Date.now();
   
+  trackingStartTime = Date.now();
   updateTrackingStatus();
   saveData();
 }
@@ -337,7 +339,10 @@ function updateTrackingStatus() {
     isTracking: isTracking,
     backgroundTracking: backgroundTracking,
     fileName: activeFileName,
-    pageName: activePageName
+    pageName: activePageName,
+    startTime: isTracking ? trackingStartTime : null,
+    fileId: activeFileId,
+    pageId: activePage
   });
 }
 

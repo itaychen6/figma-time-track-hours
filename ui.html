@@ -78,6 +78,57 @@
       display: none;
     }
     
+    /* Timer dot animation */
+    @keyframes pulse {
+      0% { transform: scale(1); opacity: 1; }
+      50% { transform: scale(1.2); opacity: 0.7; }
+      100% { transform: scale(1); opacity: 1; }
+    }
+    
+    #timer-dot.pulsing {
+      animation: pulse 1.5s infinite ease-in-out;
+    }
+    
+    /* Status text styles */
+    #status-text {
+      text-align: center;
+      margin: 8px 0;
+      font-size: 14px;
+      font-weight: 500;
+    }
+    
+    .status-active {
+      color: #34c759;
+    }
+    
+    .status-inactive {
+      color: #8e8e93;
+    }
+    
+    /* Timer container */
+    .timer-container {
+      position: relative;
+      display: inline-block;
+    }
+    
+    /* Timer indicator */
+    .timer-indicator {
+      position: absolute;
+      top: 4px;
+      right: -12px;
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+    }
+    
+    .timer-indicator.active {
+      background-color: #34c759;
+    }
+    
+    .timer-indicator.inactive {
+      background-color: #8e8e93;
+    }
+    
     .file-info {
       margin-bottom: 16px;
       text-align: center;
@@ -549,7 +600,7 @@
           <span id="timer">00:00:00</span>
           <div id="timer-dot"></div>
         </div>
-        <div id="tracking-status" class="status-inactive">Not Tracking</div>
+        <div id="status-text" class="status-inactive">Not tracking</div>
       </div>
       
       <!-- File Info -->
@@ -651,28 +702,83 @@
     let currentSessionId = null;
     let activelyFetchingFromFirebase = false;
     let activelyInitializingFirebase = false;
+    let firebaseInitRetryCount = 0;
+    const MAX_FIREBASE_INIT_RETRIES = 3;
+    let firebaseInitTimeoutId = null;
 
     // Initialize Firebase when config is received
     function initializeFirebase(config) {
+      // Prevent multiple simultaneous initialization attempts
+      if (activelyInitializingFirebase) {
+        console.log('Firebase initialization already in progress, ignoring duplicate request');
+        return;
+      }
+      
+      // Reset Firebase state if we're retrying
+      firebaseInitialized = false;
+      clearTimeout(firebaseInitTimeoutId);
+      
       try {
         console.log('Initializing Firebase with config:', config);
         firebaseConfig = config;
         
-        // Clear active initialization flag once we've started
+        // Mark as actively initializing to prevent race conditions
         activelyInitializingFirebase = true;
         
         // Update UI to show we're connecting
         updateFirebaseStatus('Connecting to Firebase...');
         
-        // Initialize Firebase app if not already initialized
-        if (!firebase.apps.length) {
-          firebaseApp = firebase.initializeApp(firebaseConfig);
-        } else {
-          firebaseApp = firebase.app();
-        }
+        // Global timeout for the entire initialization process
+        firebaseInitTimeoutId = setTimeout(() => {
+          if (!firebaseInitialized) {
+            console.warn(`Firebase initialization timed out after 15 seconds (attempt ${firebaseInitRetryCount + 1}/${MAX_FIREBASE_INIT_RETRIES})`);
+            if (firebaseInitRetryCount < MAX_FIREBASE_INIT_RETRIES) {
+              firebaseInitRetryCount++;
+              activelyInitializingFirebase = false;
+              initializeFirebase(config); // Retry initialization
+            } else {
+              console.error('Max Firebase initialization retries reached, falling back to local storage');
+              handleFirebaseError(new Error('Firebase initialization timed out after multiple attempts'));
+              proceedWithoutAuth();
+            }
+          }
+        }, 15000);
         
+        // Initialize Firebase app if not already initialized
+        if (firebase.apps.length) {
+          try {
+            // Try to delete existing app if there's an issue
+            firebase.app().delete().then(() => {
+              console.log('Previous Firebase app deleted');
+              firebaseApp = firebase.initializeApp(firebaseConfig);
+              continueFirebaseInit();
+            }).catch(error => {
+              console.warn('Error deleting previous Firebase app:', error);
+              firebaseApp = firebase.app();
+              continueFirebaseInit();
+            });
+          } catch (e) {
+            console.warn('Error handling existing Firebase app:', e);
+            firebaseApp = firebase.app();
+            continueFirebaseInit();
+          }
+        } else {
+          firebaseApp = firebase.initializeApp(firebaseConfig);
+          continueFirebaseInit();
+        }
+      } catch (error) {
+        console.error('Error initializing Firebase:', error);
+        handleFirebaseError(error);
+        clearTimeout(firebaseInitTimeoutId);
+        activelyInitializingFirebase = false;
+        proceedWithoutAuth();
+      }
+    }
+    
+    // Continue Firebase initialization after app setup
+    function continueFirebaseInit() {
+      try {
         firebaseDb = firebase.database();
-        firebaseInitialized = true;
         
         // Monitor Firebase connection status
         setupFirebaseConnectionMonitor();
@@ -715,18 +821,34 @@
           }
         });
       } catch (error) {
-        console.error('Error initializing Firebase:', error);
+        console.error('Error in continueFirebaseInit:', error);
         handleFirebaseError(error);
+        activelyInitializingFirebase = false;
+        clearTimeout(firebaseInitTimeoutId);
         proceedWithoutAuth();
       }
     }
     
     // Complete Firebase initialization after auth
     function completeFirebaseInit(uid) {
-      // User is signed in
-      userId = uid;
+      // Clear the global initialization timeout
+      clearTimeout(firebaseInitTimeoutId);
+      
+      // User is signed in - ensure we have a string uid
+      userId = uid ? String(uid) : generateUniqueId();
       
       console.log('Firebase initialized with user ID:', userId);
+      firebaseInitialized = true;
+      
+      // Reset retry counter since we succeeded
+      firebaseInitRetryCount = 0;
+      
+      // Store userId in localStorage for persistence
+      try {
+        localStorage.setItem('figmaTimeTrackUserId', userId);
+      } catch (e) {
+        console.warn('Failed to store userId in localStorage:', e);
+      }
       
       // Record this session in Firebase
       recordSessionStart();
@@ -750,27 +872,64 @@
         loadSummaryFromFirebase();
       }
       
+      // Update UI to show connected status
+      updateFirebaseStatus('Connected to Firebase');
+      
       // Clear active initialization flag
       activelyInitializingFirebase = false;
     }
     
     // Proceed with initialization even without auth
     function proceedWithoutAuth() {
+      // Clear the global initialization timeout
+      clearTimeout(firebaseInitTimeoutId);
+      
       console.log('Proceeding with initialization without auth');
       
-      // If we have a stored userId, use it
-      if (userId) {
-        console.log('Using stored userId:', userId);
+      // First try to get userId from localStorage
+      if (!userId) {
+        try {
+          const storedUserId = localStorage.getItem('figmaTimeTrackUserId');
+          if (storedUserId) {
+            userId = storedUserId;
+            console.log('Retrieved userId from localStorage:', userId);
+          }
+        } catch (e) {
+          console.warn('Failed to retrieve userId from localStorage:', e);
+        }
+      }
+      
+      // If we still don't have a userId, generate one
+      if (!userId) {
+        userId = generateUniqueId();
+        console.log('Generated new userId:', userId);
         
-        // Set up real-time listener for tracking data
-        setupFirebaseDataListener();
-        
-        // Immediately load summary data if available
+        // Store the new userId
+        try {
+          localStorage.setItem('figmaTimeTrackUserId', userId);
+        } catch (e) {
+          console.warn('Failed to store userId in localStorage:', e);
+        }
+      }
+      
+      // Ensure userId is a string
+      userId = String(userId);
+      console.log('Using userId:', userId);
+      
+      // Set up real-time listener for tracking data
+      setupFirebaseDataListener();
+      
+      // Notify the plugin of our userId
+      parent.postMessage({ 
+        pluginMessage: { 
+          type: 'firebase-init-complete', 
+          userId: userId 
+        } 
+      }, '*');
+      
+      // Immediately load summary data if on summary tab
+      if (document.getElementById('summary-tab').classList.contains('active')) {
         loadSummaryFromFirebase();
-      } else {
-        // No userId, try falling back to local data
-        console.warn('No userId available, using backup data');
-        useBackupData();
       }
       
       // Clear active initialization flag
@@ -1649,15 +1808,78 @@
       if (msg.type === 'firebase-config') {
         console.log('Received Firebase config');
         
+        // Only proceed if we have a valid config
+        if (!msg.config || !msg.userId) {
+          console.error('Invalid Firebase config received:', msg);
+          showFirebaseError('Invalid Firebase configuration');
+          return;
+        }
+        
         // Store user ID
         userId = msg.userId;
         
+        // Mark that we're actively trying to initialize
+        activelyInitializingFirebase = true;
+        
         // Initialize Firebase with the provided config
         initializeFirebase(msg.config);
+        
+        // If we're on the summary tab, try to load data right away
+        if (document.getElementById('summary-tab').classList.contains('active')) {
+          setTimeout(() => {
+            if (firebaseInitialized) {
+              loadSummaryFromFirebase();
+            }
+          }, 1000);
+        }
       }
       else if (msg.type === 'tracking-status') {
+        console.log('Received tracking status update:', msg);
+        
         isTracking = msg.isTracking;
+        
+        // Update tracking button state
         updateTrackingButton();
+        
+        // Update timer display with current tracking state
+        if (msg.isTracking && msg.startTime) {
+          updateTimerDisplay(true, msg.startTime);
+          
+          // Show file info if available
+          if (msg.fileName) {
+            updateFileInfo(msg.fileName, msg.pageName || '');
+          }
+          
+          // Add visual indicator to timer dot
+          const timerDot = document.getElementById('timer-dot');
+          if (timerDot) {
+            timerDot.style.display = 'block';
+            timerDot.classList.add('pulsing');
+          }
+          
+          // Update status text
+          const statusText = document.getElementById('status-text');
+          if (statusText) {
+            statusText.textContent = 'Tracking active';
+            statusText.className = 'status-active';
+          }
+        } else {
+          updateTimerDisplay(false, 0);
+          
+          // Hide timer dot
+          const timerDot = document.getElementById('timer-dot');
+          if (timerDot) {
+            timerDot.style.display = 'none';
+            timerDot.classList.remove('pulsing');
+          }
+          
+          // Update status text
+          const statusText = document.getElementById('status-text');
+          if (statusText) {
+            statusText.textContent = 'Tracking paused';
+            statusText.className = 'status-inactive';
+          }
+        }
       }
       else if (msg.type === 'update-summary') {
         console.log('Received update-summary request');
@@ -1676,54 +1898,140 @@
       }
     };
 
-    // Load summary data exclusively from Firebase
+    // Load summary data from Firebase
     function loadSummaryFromFirebase() {
-      if (!firebaseInitialized || !firebaseDb || !userId) {
+      console.log('Loading summary data from Firebase');
+      
+      // Check if Firebase is initialized
+      if (!firebaseInitialized || !firebaseDb) {
         console.warn('Firebase not initialized, cannot load summary');
-        showFirebaseError('Firebase not initialized');
+        
+        // Show loading with more informative message
+        document.getElementById('summary-container').innerHTML = `
+          <div class="firebase-loading">
+            <div class="spinner"></div>
+            <p>Waiting for Firebase connection...</p>
+            <small>Firebase initialization in progress. Please wait.</small>
+            <button id="use-local-data-btn" class="small-button">Use local data instead</button>
+          </div>
+        `;
+        
+        // Add button to use local data instead
+        document.getElementById('use-local-data-btn').addEventListener('click', function() {
+          useBackupData();
+        });
+        
+        // Set a timeout to fall back to local data if Firebase doesn't initialize quickly
+        setTimeout(() => {
+          if (!firebaseInitialized) {
+            console.warn('Firebase still not initialized after 10 seconds, falling back to local data');
+            useBackupData();
+          }
+        }, 10000);
+        
         return;
       }
       
-      console.log('Loading summary data from Firebase...');
-      
-      // Show loading indicator
-      if (document.getElementById('summary-tab').classList.contains('active')) {
-        document.getElementById('summary-container').innerHTML = 
-          '<div class="firebase-loading"><div class="spinner"></div>' + 
-          '<p>Loading data from Firebase...</p></div>';
+      // Prevent multiple simultaneous Firebase requests
+      if (activelyFetchingFromFirebase) {
+        console.log('Already fetching from Firebase, skip duplicate request');
+        return;
       }
       
-      // Set a timeout to ensure the operation doesn't hang
-      const timeoutId = setTimeout(() => {
-        console.warn('Firebase operation timed out');
-        showFirebaseError('Firebase request timed out');
-      }, 10000);
+      activelyFetchingFromFirebase = true;
       
-      // Load data from Firebase
-      firebaseDb.ref('timeData/' + userId).once('value')
+      // Show loading indicator
+      document.getElementById('summary-container').innerHTML = `
+        <div class="firebase-loading">
+          <div class="spinner"></div>
+          <p>Loading data from Firebase...</p>
+          <small id="firebase-loading-status">Connecting to database...</small>
+        </div>
+      `;
+      
+      // Update loading status every second to show it's still trying
+      let loadingTimeElapsed = 0;
+      const loadingStatusElement = document.getElementById('firebase-loading-status');
+      const loadingStatusInterval = setInterval(() => {
+        loadingTimeElapsed += 1;
+        if (loadingStatusElement) {
+          loadingStatusElement.textContent = `Loading... (${loadingTimeElapsed}s elapsed)`;
+        }
+      }, 1000);
+      
+      // Set a longer timeout for slower connections
+      const timeoutDuration = 20000; // 20 seconds
+      const timeoutId = setTimeout(() => {
+        clearInterval(loadingStatusInterval);
+        console.warn(`Firebase fetch timed out after ${timeoutDuration/1000} seconds`);
+        activelyFetchingFromFirebase = false;
+        
+        document.getElementById('summary-container').innerHTML = `
+          <div class="error-container">
+            <div class="error-icon">⚠️</div>
+            <h3>Loading Timeout</h3>
+            <p>Firebase data loading took too long. Using local data instead.</p>
+            <button id="retry-firebase-load" class="button">Retry Firebase</button>
+          </div>
+        `;
+        
+        document.getElementById('retry-firebase-load').addEventListener('click', function() {
+          loadSummaryFromFirebase();
+        });
+        
+        // Fall back to local data
+        useBackupData();
+      }, timeoutDuration);
+      
+      // Create timestamp for tracking how long the load takes
+      const startTime = Date.now();
+      
+      // Get the reference to summary data
+      firebaseDb.ref('summary/' + userId)
+        .once('value')
         .then(snapshot => {
+          // Clear the timeout and interval since we got data
           clearTimeout(timeoutId);
+          clearInterval(loadingStatusInterval);
           
-          const data = snapshot.val();
+          const data = snapshot.val() || {};
+          activelyFetchingFromFirebase = false;
+          
+          // Calculate how long it took to load
+          const loadTime = Date.now() - startTime;
+          console.log(`Firebase data loaded in ${loadTime}ms`);
+          
+          // If nothing found, try backup
           if (!data || Object.keys(data).length === 0) {
-            console.log('No data found in Firebase');
+            console.log('No data found in Firebase, using backup data');
             document.getElementById('summary-container').innerHTML = `
-              <div class="empty-state">
-                <div class="empty-icon">📊</div>
-                <h3>No Time Tracked Yet</h3>
-                <p>Start working on your files to track time.</p>
-                <button id="refresh-summary-btn" class="button">Refresh</button>
+              <div class="no-data-message">
+                <p>No data found in Firebase.</p>
+                <button id="retry-firebase-btn" class="button">Retry</button>
+                <button id="use-local-btn" class="button secondary">Use Local Data</button>
               </div>
             `;
             
-            document.getElementById('refresh-summary-btn').addEventListener('click', function() {
-              refreshSummary();
+            document.getElementById('retry-firebase-btn').addEventListener('click', function() {
+              loadSummaryFromFirebase();
             });
+            
+            document.getElementById('use-local-btn').addEventListener('click', function() {
+              useBackupData();
+            });
+            
             return;
           }
           
           console.log('Data loaded from Firebase successfully');
           summaryData = data;
+          
+          // Save to localStorage as backup
+          try {
+            localStorage.setItem('figmaTimeTrackSummary_backup', JSON.stringify(data));
+          } catch (e) {
+            console.warn('Failed to save Firebase data to localStorage:', e);
+          }
           
           // Update the UI with the fetched data
           updateSummaryDisplay(data, 'Firebase');
@@ -1731,14 +2039,58 @@
           // Update metadata to indicate we've successfully loaded data
           firebaseDb.ref('metadata/' + userId).update({
             lastSuccessfulLoad: Date.now(),
-            hasValidData: true
+            hasValidData: true,
+            loadTime: loadTime
           }).catch(err => console.warn('Error updating metadata:', err));
         })
         .catch(error => {
           clearTimeout(timeoutId);
+          clearInterval(loadingStatusInterval);
+          activelyFetchingFromFirebase = false;
+          
           console.error('Error loading from Firebase:', error);
-          showFirebaseError(error.message);
+          
+          document.getElementById('summary-container').innerHTML = `
+            <div class="error-container">
+              <div class="error-icon">❌</div>
+              <h3>Firebase Error</h3>
+              <p>${error.message}</p>
+              <div class="button-row">
+                <button id="retry-firebase-btn" class="button">Retry</button>
+                <button id="fallback-btn" class="button secondary">Use Local Data</button>
+              </div>
+            </div>
+          `;
+          
+          document.getElementById('retry-firebase-btn').addEventListener('click', function() {
+            loadSummaryFromFirebase();
+          });
+          
+          document.getElementById('fallback-btn').addEventListener('click', function() {
+            useBackupData();
+          });
+          
+          // Log error for analytics
+          logErrorToFirebase('firebase_load_error', error.message);
         });
+    }
+    
+    // Log errors to Firebase for analytics
+    function logErrorToFirebase(errorType, errorMessage) {
+      if (!firebaseInitialized || !firebaseDb || !userId) return;
+      
+      try {
+        const errorRef = firebaseDb.ref(`errors/${userId}`).push();
+        errorRef.set({
+          type: errorType,
+          message: errorMessage,
+          timestamp: Date.now(),
+          userAgent: navigator.userAgent,
+          url: window.location.href
+        }).catch(e => console.warn('Failed to log error to Firebase:', e));
+      } catch (e) {
+        console.warn('Error logging to Firebase:', e);
+      }
     }
     
     // Display Firebase error with retry option
