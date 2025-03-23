@@ -20,7 +20,8 @@
       "https://*.firebaseio.com",
       "https://www.gstatic.com",
       "https://identitytoolkit.googleapis.com",
-      "https://firebasestorage.googleapis.com"
+      "https://firebasestorage.googleapis.com",
+      "https://*.asia-southeast1.firebasedatabase.app"
     ]
   }
 }
