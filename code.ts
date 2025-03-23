@@ -172,6 +172,16 @@ figma.ui.onmessage = (message: any) => {
       console.warn('Cannot sync to Firebase - not initialized');
     }
   }
+  else if (pluginMessage.type === 'stop-tracking') {
+    console.log('Stop tracking requested from UI');
+    if (isTracking) {
+      stopTracking();
+    }
+  }
+  else if (pluginMessage.type === 'start-tracking') {
+    console.log('Start tracking requested from UI');
+    handleActivity(); // This will start tracking if not already tracking
+  }
 };
 
 // Start the plugin when UI sends ready message

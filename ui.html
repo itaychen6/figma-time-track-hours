@@ -1382,8 +1382,8 @@
         document.getElementById('status-text').className = 'status-active';
         
         // Update button visibility
-        document.getElementById('toggle-timer').style.display = 'none';
-        document.getElementById('save-time').style.display = 'inline-block';
+        document.getElementById('start-button').style.display = 'none';
+        document.getElementById('stop-button').style.display = 'block';
       } else {
         // Reset the timer display
         document.getElementById('timer').textContent = '00:00:00';
@@ -1393,11 +1393,11 @@
         
         // Update status text
         document.getElementById('status-text').textContent = 'Not tracking';
-        document.getElementById('status-text').className = '';
+        document.getElementById('status-text').className = 'status-inactive';
         
         // Update button visibility
-        document.getElementById('toggle-timer').style.display = 'inline-block';
-        document.getElementById('save-time').style.display = 'none';
+        document.getElementById('start-button').style.display = 'block';
+        document.getElementById('stop-button').style.display = 'none';
       }
     }
     
