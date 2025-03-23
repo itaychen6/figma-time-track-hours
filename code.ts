@@ -95,9 +95,18 @@ figma.showUI(__html__, { width: 300, height: 460 });
 
 // Register the plugin close handler
 figma.on('close', () => {
-  console.log('Plugin closing, saving data to Firebase');
-  // Save data synchronously before closing
-  saveDataToFirebaseOnClose();
+  console.log('Plugin closing, saving final data to Firebase...');
+  
+  // Make sure all tracking data is saved to Firebase before closing
+  if (files && Object.keys(files).length > 0) {
+    saveTrackingDataToFirebase()
+      .then(() => {
+        console.log('Final data successfully saved to Firebase before closing');
+      })
+      .catch(error => {
+        console.error('Error saving final data to Firebase:', error);
+      });
+  }
 });
 
 // First, load all pages before registering event handlers
@@ -118,210 +127,126 @@ figma.loadAllPagesAsync().then(() => {
   console.error('Error loading all pages:', error);
 });
 
-// Focus the plugin window
-figma.ui.onmessage = async (message: any) => {
-  const pluginMessage = message as PluginMessage;
+// Handle messages from the UI
+figma.ui.onmessage = (message: any) => {
+  const pluginMessage = message as {type: string, [key: string]: any};
   console.log('Message received from UI:', pluginMessage.type);
-  
-  if (pluginMessage.type === 'resize') {
-    figma.ui.resize(pluginMessage.width, pluginMessage.height);
-  }
-  
-  else if (pluginMessage.type === 'load-data') {
-    loadPluginData();
-  }
-  
-  else if (pluginMessage.type === 'start-tracking') {
-    startTracking();
-  }
-  
-  else if (pluginMessage.type === 'stop-tracking') {
-    stopTracking();
-  }
-  
-  else if (pluginMessage.type === 'save-time-entry') {
-    saveTimeEntry(pluginMessage.entry);
-  }
-  
-  else if (pluginMessage.type === 'toggle-background-tracking') {
-    backgroundTracking = pluginMessage.enabled;
-    figma.clientStorage.setAsync('backgroundTracking', backgroundTracking);
-    // If switching from background to foreground and current file isn't active
-    if (!backgroundTracking && activeFileId !== figma.currentPage.parent.id) {
-      stopTracking();
-    }
-    sendAllFilesData();
-  }
-  
-  else if (pluginMessage.type === 'ui-visibility-changed') {
-    isUiVisible = pluginMessage.isVisible;
-    console.log(`UI visibility changed: ${isUiVisible}`);
+
+  if (pluginMessage.type === 'ui-loaded') {
+    console.log('UI loaded, sending initial Firebase config and data');
     
-    // If UI becomes visible, check activity and update
-    if (isUiVisible) {
-      handleActivity();
-      updateTrackingStatus();
-      sendAllFilesData();
-    }
-  }
-  
-  else if (pluginMessage.type === 'request-files-data') {
-    sendAllFilesData();
-  }
-  
-  else if (pluginMessage.type === 'get-summary') {
-    // Send back all files data as summary
+    // Always send the Firebase config on startup
     figma.ui.postMessage({
-      type: 'update-summary',
-      files: files,
-      userId: await userId,
-      immediate: pluginMessage.immediate // Pass through the immediate flag
+      type: 'firebase-config',
+      config: firebaseConfig,
+      userId: userId
     });
-  }
-  
-  else if (pluginMessage.type === 'sync-to-firebase') {
-    saveDataToFirebase();
-  }
-  
-  else if (pluginMessage.type === 'sync-from-firebase') {
-    requestFirebaseData();
-  }
-  
-  else if (pluginMessage.type === 'firebase-init-complete') {
-    firebaseInitialized = true;
-    console.log('Firebase initialized successfully');
-    // Once Firebase is initialized, request data
-    requestFirebaseData();
-  }
-  
-  else if (pluginMessage.type === 'firebase-data-loaded') {
-    if (pluginMessage.data && Object.keys(pluginMessage.data).length > 0) {
-      console.log('Loaded data from Firebase');
-      files = pluginMessage.data;
-      sendAllFilesData();
-    } else {
-      console.log('No data found in Firebase, using local data');
-    }
-  }
-  
-  else if (pluginMessage.type === 'firebase-error') {
-    console.error('Firebase error:', pluginMessage.error);
-    // On Firebase error, fallback to local data
-    loadLocalData();
-  }
-  
-  else if (pluginMessage.type === 'ui-loaded') {
-    console.log('UI has loaded');
     
     // Send current tracking status
     updateTrackingStatus();
+  }
+  else if (pluginMessage.type === 'reinitialize-firebase') {
+    console.log('Reinitializing Firebase connection...');
     
-    // Send Firebase config to UI for initialization
-    sendFirebaseConfig();
+    // Re-send the Firebase config
+    figma.ui.postMessage({
+      type: 'firebase-config',
+      config: firebaseConfig,
+      userId: userId
+    });
+  }
+  else if (pluginMessage.type === 'sync-to-firebase') {
+    // Force save all data to Firebase
+    console.log('Manual Firebase sync requested');
     
-    // Notify UI of current file info
-    if (pagesLoaded) {
-      const currentFileId = figma.currentPage.parent.id;
-      handleFileChange(
-        currentFileId,
-        figma.currentPage.id,
-        (figma.currentPage.parent as any).name,
-        figma.currentPage.name
-      );
+    if (firebaseInitialized && userId) {
+      saveTrackingDataToFirebase()
+        .then(() => {
+          console.log('Manual Firebase sync completed');
+        })
+        .catch(error => {
+          console.error('Error during manual Firebase sync:', error);
+        });
+    } else {
+      console.warn('Cannot sync to Firebase - not initialized');
     }
-    
-    // Send all files data to UI
-    sendAllFilesData();
   }
 };
 
 // Start the plugin when UI sends ready message
 function initializePlugin() {
-  // Send Firebase config to UI immediately
-  sendFirebaseConfig();
+  console.log('Initializing plugin...');
   
-  // Set up file change checking
-  fileCheckInterval = setInterval(checkCurrentFile, FILE_CHECK_INTERVAL);
-  
-  // Set up activity checking
-  activityCheckInterval = setInterval(checkActivity, ACTIVITY_CHECK_INTERVAL);
-  
-  // Set up periodic saving
-  saveInterval = setInterval(saveData, SAVE_INTERVAL);
-  
-  // Set up heartbeat to check if plugin is still active
-  heartbeatInterval = setInterval(heartbeat, HEARTBEAT_INTERVAL);
-  
-  // Initial loading of saved data
-  loadPluginData();
-  
-  // Check current file immediately
-  checkCurrentFile();
-  
-  // Log initialization
-  console.log('Plugin initialized');
-  
-  // Wait a bit to ensure UI is loaded before starting tracking
-  setTimeout(() => {
-    // Load background tracking preference
-    figma.clientStorage.getAsync('backgroundTracking').then(value => {
-      if (value !== undefined && value !== null) {
-        backgroundTracking = value;
+  // Try to load user ID from client storage for persistence
+  figma.clientStorage.getAsync('figmaTimeTrackUserId')
+    .then(storedUserId => {
+      if (storedUserId) {
+        console.log('Found stored user ID:', storedUserId);
+        userId = storedUserId;
       }
-      console.log('Background tracking setting loaded:', backgroundTracking);
       
-      // Start tracking automatically when plugin loads
-      console.log('Starting initial tracking...');
-      handleActivity();
+      // Set up file change checking
+      fileCheckInterval = setInterval(checkCurrentFile, FILE_CHECK_INTERVAL);
       
-      // Explicitly update UI with tracking status and all files data after slight delay
+      // Set up activity checking
+      activityCheckInterval = setInterval(checkActivity, ACTIVITY_CHECK_INTERVAL);
+      
+      // Set up periodic saving
+      saveInterval = setInterval(saveData, SAVE_INTERVAL);
+      
+      // Set up heartbeat to check if plugin is still active
+      heartbeatInterval = setInterval(heartbeat, HEARTBEAT_INTERVAL);
+      
+      // Initial loading of saved data
+      loadPluginData();
+      
+      // Check current file immediately
+      checkCurrentFile();
+      
+      // Wait a bit to ensure UI is loaded before starting tracking
       setTimeout(() => {
-        sendAllFilesData();
-        updateTrackingStatus();
-        
-        // Send the backgroundTracking state to UI
-        figma.ui.postMessage({
-          type: 'background-tracking-state',
-          enabled: backgroundTracking
+        // Load background tracking preference
+        figma.clientStorage.getAsync('backgroundTracking').then(value => {
+          if (value !== undefined && value !== null) {
+            backgroundTracking = value;
+          }
+          console.log('Background tracking setting loaded:', backgroundTracking);
+          
+          // Start tracking automatically when plugin loads
+          console.log('Starting initial tracking...');
+          handleActivity();
+          
+          // Explicitly update UI with tracking status and all files data after slight delay
+          setTimeout(() => {
+            sendAllFilesData();
+            updateTrackingStatus();
+            
+            // Send the backgroundTracking state to UI
+            figma.ui.postMessage({
+              type: 'background-tracking-state',
+              enabled: backgroundTracking
+            });
+            
+            console.log('Sent initial tracking status to UI');
+          }, 1000);
+        }).catch(error => {
+          console.error('Error loading background tracking setting:', error);
+          // Use default if error
+          console.log('Using default background tracking setting:', backgroundTracking);
         });
-        
-        console.log('Sent initial tracking status to UI');
-      }, 1000);
-    }).catch(error => {
-      console.error('Error loading background tracking setting:', error);
-      // Use default if error
-      console.log('Using default background tracking setting:', backgroundTracking);
+      }, PLUGIN_REACTIVATION_DELAY);
+    })
+    .catch(err => {
+      console.warn('Could not load user ID from client storage:', err);
+      
+      // Continue with initialization anyway
+      fileCheckInterval = setInterval(checkCurrentFile, FILE_CHECK_INTERVAL);
+      activityCheckInterval = setInterval(checkActivity, ACTIVITY_CHECK_INTERVAL);
+      saveInterval = setInterval(saveData, SAVE_INTERVAL);
+      heartbeatInterval = setInterval(heartbeat, HEARTBEAT_INTERVAL);
+      loadPluginData();
+      checkCurrentFile();
     });
-  }, PLUGIN_REACTIVATION_DELAY);
-}
-
-// Initialize the Firebase database connection
-async function sendFirebaseConfig() {
-  console.log('Sending Firebase config to UI');
-  try {
-    figma.ui.postMessage({
-      type: 'firebase-config',
-      config: firebaseConfig,
-      userId: await userId
-    });
-    
-    // Set up automatic Firebase sync
-    if (!saveInterval) {
-      saveInterval = setInterval(() => {
-        saveData();
-        
-        // Check if it's time to sync with Firebase
-        const now = Date.now();
-        if (now - lastFirebaseSync > FIREBASE_SYNC_INTERVAL) {
-          console.log('Auto-syncing with Firebase');
-          saveDataToFirebase();
-          lastFirebaseSync = now;
-        }
-      }, SAVE_INTERVAL);
-    }
-  } catch (error) {
-    console.error('Error sending Firebase config:', error);
-  }
 }
 
 // Handle user activity
@@ -545,7 +470,11 @@ async function saveDataToFirebase() {
     if (!firebaseInitialized) {
       console.warn('Firebase not initialized, cannot save');
       // Re-send Firebase config to try to initialize
-      sendFirebaseConfig();
+      figma.ui.postMessage({
+        type: 'firebase-config',
+        config: firebaseConfig,
+        userId: userId
+      });
       return;
     }
     
@@ -563,7 +492,7 @@ async function saveDataToFirebase() {
     figma.ui.postMessage({
       type: 'save-to-firebase',
       files: files,
-      userId: await userId,
+      userId: userId,
       timestamp: Date.now()
     });
     
@@ -581,7 +510,11 @@ async function requestFirebaseData() {
     
     if (!firebaseInitialized) {
       console.warn('Firebase not initialized, sending config first');
-      sendFirebaseConfig();
+      figma.ui.postMessage({
+        type: 'firebase-config',
+        config: firebaseConfig,
+        userId: userId
+      });
       
       // Set a flag to indicate we want to fetch data when Firebase initializes
       pendingFirebaseDataRequest = true;
@@ -602,7 +535,7 @@ async function requestFirebaseData() {
     // Request data from UI
     figma.ui.postMessage({
       type: 'load-from-firebase',
-      userId: await userId,
+      userId: userId,
       priority: 'high' // Signal this is a primary data load
     });
   } catch (error) {
@@ -625,7 +558,11 @@ async function loadPluginData() {
     
     // If Firebase isn't initialized yet, initialize it and request later
     console.log('Firebase not initialized, sending config and will request data after initialization');
-    sendFirebaseConfig();
+    figma.ui.postMessage({
+      type: 'firebase-config',
+      config: firebaseConfig,
+      userId: userId
+    });
     
     // We'll only use client storage as a fallback if Firebase fails
     console.log('Setting up Firebase initialization check interval');
@@ -667,7 +604,7 @@ async function fallbackToClientStorage() {
       figma.ui.postMessage({
         type: 'update-summary',
         files: files,
-        userId: await userId,
+        userId: userId,
         immediate: true,
         source: 'clientStorage' // Flag the source for UI awareness
       });
@@ -680,7 +617,7 @@ async function fallbackToClientStorage() {
       figma.ui.postMessage({
         type: 'update-summary',
         files: {},
-        userId: await userId,
+        userId: userId,
         immediate: true
       });
     }
@@ -764,39 +701,36 @@ function sendAllFilesData() {
   });
 }
 
-// Save data to Firebase on plugin close (synchronous version)
-function saveDataToFirebaseOnClose() {
-  try {
-    console.log('Saving final data to Firebase before plugin closes');
-    
-    // Make sure we have data to save
-    if (!files || Object.keys(files).length === 0) {
-      console.log('No data to save to Firebase on close');
-      return;
-    }
-    
-    // Before closing, make one last save to the client storage
-    figma.clientStorage.setAsync('timeTrackingData', files).catch(err => {
-      console.error('Error saving to client storage on close:', err);
-    });
-    
-    // Also make sure any active tracking is stopped and saved
-    if (isTracking) {
-      stopTracking();
-    }
-    
-    // Send a special message to UI to save to Firebase immediately
-    figma.ui.postMessage({
-      type: 'save-to-firebase-before-close',
-      files: files,
-      userId: userId,
-      timestamp: Date.now()
-    });
-    
-    // Give the UI a moment to process the save
-    // This doesn't actually pause since figma.close is not awaitable,
-    // but at least we've sent the message to the UI which will attempt the save
-  } catch (error) {
-    console.error('Error in saveDataToFirebaseOnClose:', error);
+// Save tracking data to Firebase with retry logic
+async function saveTrackingDataToFirebase(): Promise<void> {
+  if (!firebaseInitialized || !userId) {
+    console.warn('Firebase not initialized, cannot save tracking data');
+    return Promise.reject(new Error('Firebase not initialized'));
   }
+  
+  return new Promise((resolve, reject) => {
+    // Set a timeout to ensure the operation completes
+    const timeoutId = setTimeout(() => {
+      console.warn('Firebase save operation timed out, may be incomplete');
+      resolve(); // Resolve anyway to avoid blocking plugin close
+    }, 3000);
+    
+    try {
+      // Save data to Firebase through the UI
+      figma.ui.postMessage({
+        type: 'save-to-firebase',
+        files: files,
+        userId: userId,
+        timestamp: Date.now()
+      });
+      
+      // Resolve immediately since we can't wait for the UI to complete the save
+      clearTimeout(timeoutId);
+      resolve();
+    } catch (error) {
+      clearTimeout(timeoutId);
+      console.error('Error initiating save to Firebase:', error);
+      reject(error);
+    }
+  });
 }
