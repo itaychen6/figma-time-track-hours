@@ -249,11 +249,12 @@
     let trackingStartTime = 0;
     let timerInterval;
 
-    // Format duration in seconds to "Xh Ym" format
+    // Format duration in seconds to "Xh Ym Zs" format
     function formatDuration(seconds) {
       const hours = Math.floor(seconds / 3600);
       const minutes = Math.floor((seconds % 3600) / 60);
-      return `${hours}h ${minutes}m`;
+      const secs = seconds % 60;
+      return `${hours}h ${minutes}m ${secs}s`;
     }
 
     // Truncate string with ellipsis if too long
