@@ -2090,42 +2090,53 @@
     function updateSummaryDisplay(data, source = 'Firebase') {
       console.log('Updating summary display with data source:', source);
       
-      // Hide loading indicator
-      document.getElementById('summary-loading').style.display = 'none';
+      // Get the summary content container
+      const summaryContent = document.getElementById('summary-content');
+      if (!summaryContent) {
+        console.error('Summary content container not found');
+        return;
+      }
       
-      // Show data source indicator
+      // Hide loading indicator if it exists
+      const loadingIndicator = document.getElementById('summary-loading');
+      if (loadingIndicator) {
+        loadingIndicator.style.display = 'none';
+      }
+      
+      // Show data source indicator if it exists
       const sourceElement = document.getElementById('summary-source');
-      sourceElement.textContent = 'Data source: ' + source;
-      sourceElement.style.display = 'block';
-      
-      // Get the summary container
-      const summaryContainer = document.getElementById('summary-content');
+      if (sourceElement) {
+        sourceElement.textContent = 'Data source: ' + source;
+        sourceElement.style.display = 'block';
+      }
       
       // Check if we have valid data
       if (!data || Object.keys(data).length === 0) {
         console.log('No summary data to display');
-        summaryContainer.innerHTML = '<div class="no-data">No tracking data available yet.</div>';
+        summaryContent.innerHTML = '<div class="no-data">No tracking data available yet.</div>';
         return;
       }
       
       // Clear previous content
-      summaryContainer.innerHTML = '';
+      summaryContent.innerHTML = '';
       
       // Convert data to array and sort by total time (descending)
       const sortedFiles = Object.values(data)
-        .filter(file => file.totalSeconds > 0)
+        .filter(file => file && file.totalSeconds > 0)
         .sort((a, b) => b.totalSeconds - a.totalSeconds);
       
       // Check if we have any files with time
       if (sortedFiles.length === 0) {
-        summaryContainer.innerHTML = '<div class="no-data">No time tracked in any files yet.</div>';
+        summaryContent.innerHTML = '<div class="no-data">No time tracked in any files yet.</div>';
         return;
       }
       
       // Calculate grand total
       let grandTotal = 0;
       sortedFiles.forEach(file => {
-        grandTotal += file.totalSeconds;
+        if (file && typeof file.totalSeconds === 'number') {
+          grandTotal += file.totalSeconds;
+        }
       });
       
       // Create header with total time
@@ -2133,21 +2144,23 @@
       header.className = 'summary-header';
       header.innerHTML = `
         <h3>Total Time: ${formatDuration(grandTotal)}</h3>
-        <div class="refresh-button" onclick="requestSummaryRefresh()">⟳</div>
+        <div class="refresh-button" onclick="refreshSummary()">⟳</div>
       `;
-      summaryContainer.appendChild(header);
+      summaryContent.appendChild(header);
       
       // Create file list
       const fileList = document.createElement('div');
       fileList.className = 'file-list';
       
       sortedFiles.forEach(file => {
+        if (!file || typeof file.totalSeconds !== 'number') return;
+        
         const percent = (file.totalSeconds / grandTotal * 100).toFixed(1);
         
         const fileItem = document.createElement('div');
         fileItem.className = 'file-item';
         fileItem.innerHTML = `
-          <div class="file-name" title="${file.name}">${truncateString(file.name, 30)}</div>
+          <div class="file-name" title="${file.name || 'Unnamed file'}">${truncateString(file.name || 'Unnamed file', 30)}</div>
           <div class="file-time">${formatDuration(file.totalSeconds)}</div>
           <div class="file-percent">${percent}%</div>
           <div class="file-bar">
@@ -2157,46 +2170,47 @@
         fileList.appendChild(fileItem);
       });
       
-      summaryContainer.appendChild(fileList);
+      summaryContent.appendChild(fileList);
     }
 
     // Document ready handler to initialize plugin on load
     document.addEventListener('DOMContentLoaded', function() {
       console.log('UI loaded - initializing');
       
-      // Set up initial UI state
-      document.getElementById('summary-loading').textContent = 'Initializing...';
-      document.getElementById('summary-loading').style.display = 'block';
+      // Ensure summary container has the proper elements
+      const summaryTab = document.getElementById('summary-tab');
+      if (summaryTab) {
+        // Check if we need to create the loading and source elements
+        if (!document.getElementById('summary-loading')) {
+          const loadingElement = document.createElement('div');
+          loadingElement.id = 'summary-loading';
+          loadingElement.className = 'loading-indicator';
+          loadingElement.textContent = 'Loading...';
+          summaryTab.prepend(loadingElement);
+        }
+        
+        if (!document.getElementById('summary-source')) {
+          const sourceElement = document.createElement('div');
+          sourceElement.id = 'summary-source';
+          sourceElement.className = 'data-source';
+          sourceElement.textContent = 'Data source: Loading...';
+          summaryTab.appendChild(sourceElement);
+        }
+        
+        // Ensure we have a content container
+        if (!document.getElementById('summary-content')) {
+          const contentElement = document.createElement('div');
+          contentElement.id = 'summary-content';
+          contentElement.className = 'summary-content';
+          summaryTab.appendChild(contentElement);
+        }
+      }
       
       // Set up tab buttons and event handlers
       setupTabButtons();
       
       // Notify plugin that UI is loaded and ready to receive data
       parent.postMessage({ pluginMessage: { type: 'ui-loaded' } }, '*');
-      
-      // Default to summary tab if saved preference exists
-      const savedTab = loadTabPreference();
-      if (savedTab) {
-        handleTabButtonClick(savedTab);
-      }
-      
-      // Try loading data from localStorage immediately for a fast initial render
-      try {
-        if (isLocalStorageAvailable()) {
-          const savedData = loadSummaryFromLocalStorage();
-          if (savedData && Object.keys(savedData).length > 0) {
-            console.log('Using localStorage data for initial render');
-            summaryData = savedData;
-            
-            // Update the summary display if summary tab is active
-            if (document.getElementById('summary-tab').classList.contains('active')) {
-              updateSummaryDisplay(savedData, 'Local Storage');
-            }
-          }
-        }
-      } catch (e) {
-        console.warn('Error pre-loading localStorage data:', e);
-      }
       
       // Force a refresh of summary data after a short delay
       setTimeout(() => {
@@ -2438,27 +2452,21 @@
             if (tabId === 'summary-tab') {
               console.log('Summary tab activated');
               
-              // Display any in-memory data immediately for a responsive feel
-              if (summaryData && Object.keys(summaryData).length > 0) {
-                updateSummaryDisplay(summaryData);
+              // Show loading indicator
+              const loadingElement = document.getElementById('summary-loading');
+              if (loadingElement) {
+                loadingElement.textContent = 'Loading from Firebase...';
+                loadingElement.style.display = 'block';
               }
               
-              // Then fetch fresh data from Firebase if available
+              // Load directly from Firebase - no fallbacks
               if (firebaseInitialized && userId) {
-                loadSummaryFromFirebase(true);
-              } else if (activelyInitializingFirebase) {
-                // If Firebase is initializing, wait briefly and check again
-                setTimeout(() => {
-                  if (firebaseInitialized && userId) {
-                    loadSummaryFromFirebase(true);
-                  } else {
-                    // Still not ready, use backup or request from plugin
-                    useBackupData();
-                  }
-                }, 2000);
+                // Request fresh data from Firebase
+                loadDirectlyFromFirebase();
               } else {
-                // Firebase not available, use backup or request from plugin
-                useBackupData();
+                // Firebase not initialized, request data from plugin
+                console.log('Firebase not ready, requesting data from plugin');
+                parent.postMessage({ pluginMessage: { type: 'get-summary', immediate: true } }, '*');
               }
             }
           }
@@ -2811,33 +2819,30 @@
       if (tabId === 'summary-tab') {
         console.log('Summary tab activated');
         
-        // Display any in-memory data immediately for a responsive feel
-        if (summaryData && Object.keys(summaryData).length > 0) {
-          updateSummaryDisplay(summaryData);
+        // Show loading indicator
+        const loadingElement = document.getElementById('summary-loading');
+        if (loadingElement) {
+          loadingElement.textContent = 'Loading from Firebase...';
+          loadingElement.style.display = 'block';
         }
         
-        // Then fetch fresh data from Firebase if available
+        // Load directly from Firebase - no fallbacks
         if (firebaseInitialized && userId) {
-          loadSummaryFromFirebase(true);
-        } else if (activelyInitializingFirebase) {
-          // If Firebase is initializing, wait briefly and check again
-          setTimeout(() => {
-            if (firebaseInitialized && userId) {
-              loadSummaryFromFirebase(true);
-            } else {
-              // Still not ready, use backup or request from plugin
-              useBackupData();
-            }
-          }, 2000);
+          // Request fresh data from Firebase
+          loadDirectlyFromFirebase();
         } else {
-          // Firebase not available, use backup or request from plugin
-          useBackupData();
+          // Firebase not initialized, request data from plugin
+          console.log('Firebase not ready, requesting data from plugin');
+          parent.postMessage({ pluginMessage: { type: 'get-summary', immediate: true } }, '*');
         }
       }
       else if (tabId === 'tracking-tab') {
         // Anything special for tracking tab
         console.log('Tracking tab activated');
       }
+      
+      // Save tab preference
+      saveTabPreference(tabId);
     }
 
     // Use backup data with source indicator
@@ -2993,7 +2998,63 @@
         return false;
       }
     }
+
+    // Load summary directly from Firebase
+    function loadDirectlyFromFirebase() {
+      console.log('Loading summary directly from Firebase');
+      
+      if (!firebaseInitialized || !firebaseDb || !userId) {
+        console.warn('Firebase not initialized, requesting from plugin');
+        parent.postMessage({ pluginMessage: { type: 'get-summary', immediate: true } }, '*');
+        return;
+      }
+      
+      // Show loading state
+      const loadingElement = document.getElementById('summary-loading');
+      if (loadingElement) {
+        loadingElement.textContent = 'Loading from Firebase...';
+        loadingElement.style.display = 'block';
+      }
+      
+      // Reference to summary data
+      const summaryRef = firebaseDb.ref('summary/' + userId);
+      
+      // Fetch summary data
+      summaryRef.once('value')
+        .then(snapshot => {
+          const data = snapshot.val();
+          
+          if (data && Object.keys(data).length > 0) {
+            console.log('Summary data loaded from Firebase:', Object.keys(data).length, 'files');
+            summaryData = data;
+            updateSummaryDisplay(data, 'Firebase');
+          } else {
+            console.log('No summary data in Firebase, requesting from plugin');
+            parent.postMessage({ pluginMessage: { type: 'get-summary', immediate: true } }, '*');
+          }
+        })
+        .catch(error => {
+          console.error('Error loading from Firebase:', error);
+          parent.postMessage({ pluginMessage: { type: 'get-summary', immediate: true } }, '*');
+        });
+    }
+
+    // Request a refresh of the summary data
+    function refreshSummary() {
+      console.log('Manual refresh summary requested');
+      
+      // Show loading state
+      const loadingElement = document.getElementById('summary-loading');
+      if (loadingElement) {
+        loadingElement.textContent = 'Refreshing...';
+        loadingElement.style.display = 'block';
+      }
+      
+      // Always request fresh data from plugin which will generate it from latest tracking data
+      parent.postMessage({ pluginMessage: { type: 'get-summary', immediate: true } }, '*');
+    }
 </script>
 </body>
 </html>
+
 
