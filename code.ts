@@ -141,6 +141,11 @@ figma.ui.onmessage = (message: any) => {
     
     // Send current tracking status
     updateTrackingStatus();
+    
+    // Automatically send summary data whenever UI loads
+    setTimeout(() => {
+      sendSummaryData(true);
+    }, 1000);
   }
   else if (pluginMessage.type === 'reinitialize-firebase') {
     console.log('Reinitializing Firebase connection...');
@@ -160,6 +165,9 @@ figma.ui.onmessage = (message: any) => {
       saveTrackingDataToFirebase()
         .then(() => {
           console.log('Manual Firebase sync completed');
+          
+          // Also send summary data when manual sync is completed
+          sendSummaryData(true);
         })
         .catch(error => {
           console.error('Error during manual Firebase sync:', error);
@@ -183,6 +191,16 @@ figma.ui.onmessage = (message: any) => {
     // Generate and send summary data directly to UI
     sendSummaryData(pluginMessage.immediate || false);
   }
+  else if (pluginMessage.type === 'firebase-init-complete') {
+    console.log('Firebase initialized, saving and sending summary data');
+    firebaseInitialized = true;
+    
+    // Once Firebase is initialized, save summary data
+    saveDataToFirebase(true).then(() => {
+      // Also send updated summary to UI
+      sendSummaryData(true);
+    });
+  }
 };
 
 // Start the plugin when UI sends ready message
@@ -203,11 +221,15 @@ function initializePlugin() {
       // Set up activity checking
       activityCheckInterval = setInterval(checkActivity, ACTIVITY_CHECK_INTERVAL);
       
-      // Set up periodic saving
-      saveInterval = setInterval(() => saveData(false), SAVE_INTERVAL);
+      // Set up periodic saving (with forced summary sync)
+      saveInterval = setInterval(() => saveData(true), SAVE_INTERVAL);
       
-      // Set up Firebase sync interval
-      setInterval(() => saveData(true), FIREBASE_SYNC_INTERVAL);
+      // Set up explicit Firebase sync interval (shorter interval for summary sync)
+      setInterval(() => {
+        saveDataToFirebase(true);
+        // Also send updated summary data to UI
+        sendSummaryData(false);
+      }, FIREBASE_SYNC_INTERVAL);
       
       // Set up heartbeat to check if plugin is still active
       heartbeatInterval = setInterval(heartbeat, HEARTBEAT_INTERVAL);
@@ -242,6 +264,9 @@ function initializePlugin() {
               enabled: backgroundTracking
             });
             
+            // Automatically send summary data to UI
+            sendSummaryData(true);
+            
             console.log('Sent initial tracking status to UI');
           }, 1000);
         }).catch(error => {
@@ -257,7 +282,7 @@ function initializePlugin() {
       // Continue with initialization anyway
       fileCheckInterval = setInterval(checkCurrentFile, FILE_CHECK_INTERVAL);
       activityCheckInterval = setInterval(checkActivity, ACTIVITY_CHECK_INTERVAL);
-      saveInterval = setInterval(saveData, SAVE_INTERVAL);
+      saveInterval = setInterval(() => saveData(true), SAVE_INTERVAL);
       heartbeatInterval = setInterval(heartbeat, HEARTBEAT_INTERVAL);
       loadPluginData();
       checkCurrentFile();
@@ -343,7 +368,12 @@ function stopTracking() {
   }
   
   updateTrackingStatus();
-  saveData();
+  
+  // Save data and explicitly save summary to ensure it's preserved
+  saveData(true);
+  
+  // Send updated summary data to UI immediately
+  sendSummaryData(true);
 }
 
 // Update UI with current tracking status
@@ -509,40 +539,30 @@ async function saveDataToFirebase(forceSummarySync = false) {
       return;
     }
     
-    // Create summary data object for dedicated storage
-    if (forceSummarySync) {
-      const summaryData = {};
-      
-      // Build clean summary data
-      Object.keys(files).forEach(fileId => {
-        const file = files[fileId];
-        if (file && (file.totalSeconds > 0 || file.totalTime > 0)) {
-          summaryData[fileId] = {
-            id: fileId,
-            name: file.name,
-            totalSeconds: Math.floor((file.totalTime || 0) / 1000) || file.totalSeconds || 0
-          };
-        }
-      });
-      
-      // Send message to save both detailed tracking data and summary
-      figma.ui.postMessage({
-        type: 'save-to-firebase',
-        files: files,
-        summaryData: summaryData, // Add dedicated summary data
-        userId: userId,
-        timestamp: Date.now(),
-        forceSummarySync: true
-      });
-    } else {
-      // Regular save with just tracking data
-      figma.ui.postMessage({
-        type: 'save-to-firebase',
-        files: files,
-        userId: userId,
-        timestamp: Date.now()
-      });
-    }
+    // Always create summary data object for more reliable persistence
+    const summaryData = {};
+    
+    // Build clean summary data
+    Object.keys(files).forEach(fileId => {
+      const file = files[fileId];
+      if (file && (file.totalSeconds > 0 || file.totalTime > 0)) {
+        summaryData[fileId] = {
+          id: fileId,
+          name: file.name,
+          totalSeconds: Math.floor((file.totalTime || 0) / 1000) || file.totalSeconds || 0
+        };
+      }
+    });
+    
+    // Send message to save both detailed tracking data and summary
+    figma.ui.postMessage({
+      type: 'save-to-firebase',
+      files: files,
+      summaryData: summaryData, // Always include summary data
+      userId: userId,
+      timestamp: Date.now(),
+      forceSummarySync: true
+    });
     
     // Update last sync time
     lastFirebaseSync = Date.now();
@@ -601,6 +621,9 @@ async function loadPluginData() {
     if (firebaseInitialized) {
       console.log('Firebase initialized, requesting data from Firebase directly');
       requestFirebaseData();
+      
+      // Also request summary data explicitly
+      sendSummaryData(true);
       return;
     }
     
@@ -619,6 +642,9 @@ async function loadPluginData() {
         clearInterval(checkInterval);
         console.log('Firebase now initialized, requesting data');
         requestFirebaseData();
+        
+        // Also request summary data explicitly
+        sendSummaryData(true);
       }
     }, 1000);
     

@@ -867,15 +867,8 @@
       // Immediately check if we need to start a new day's tracking
       checkAndHandleDayChange();
       
-      // Immediately load summary data if on summary tab
-      if (document.getElementById('summary-tab').classList.contains('active')) {
-        loadSummaryFromFirebase();
-      } else {
-        // Load summary data in the background to have it ready
-        setTimeout(() => {
-          loadSummaryFromFirebase(false); // Silent load
-        }, 2000);
-      }
+      // Always load summary data immediately on startup
+      loadSummaryFromFirebase(true);
       
       // Update UI to show connected status
       updateFirebaseStatus('Connected to Firebase');
@@ -1828,15 +1821,6 @@
         
         // Initialize Firebase with the provided config
         initializeFirebase(msg.config);
-        
-        // If we're on the summary tab, try to load data right away
-        if (document.getElementById('summary-tab').classList.contains('active')) {
-          setTimeout(() => {
-            if (firebaseInitialized) {
-              loadSummaryFromFirebase();
-            }
-          }, 1000);
-        }
       }
       else if (msg.type === 'save-to-firebase') {
         console.log('Received save to Firebase request');
@@ -1857,7 +1841,7 @@
             console.error('Error saving tracking data to Firebase:', error);
           }
           
-          // If there's explicit summary data, save it to the summary path
+          // Always try to save summary data for more reliable persistence
           if (msg.summaryData && Object.keys(msg.summaryData).length > 0) {
             try {
               const summaryRef = firebaseDb.ref('summary/' + userId);
@@ -1892,6 +1876,45 @@
             await syncRef.set(msg.timestamp || Date.now());
           } catch (error) {
             console.error('Error updating sync timestamp:', error);
+          }
+        }
+      }
+      else if (msg.type === 'summary-data') {
+        console.log('Received summary data from plugin');
+        
+        if (!msg.data) {
+          console.warn('No summary data received from plugin');
+          return;
+        }
+        
+        // Store the data in memory
+        summaryData = msg.data;
+        
+        // Try to save to localStorage as backup if available
+        if (isLocalStorageAvailable()) {
+          try {
+            localStorage.setItem('figmaTimeTrackSummary_backup', JSON.stringify(summaryData));
+            localStorage.setItem('figmaTimeTrackSummaryTimestamp', Date.now().toString());
+          } catch (e) {
+            console.warn('Could not save to localStorage:', e);
+          }
+        }
+        
+        // Always update the UI when we receive new summary data, regardless of which tab is active
+        // This ensures data is fresh when switching to the summary tab
+        updateSummaryDisplay(msg.data);
+        
+        // If Firebase is initialized, also save this data to Firebase to ensure it's persistent
+        if (firebaseInitialized && firebaseDb && userId) {
+          try {
+            const summaryRef = firebaseDb.ref('summary/' + userId);
+            summaryRef.set(msg.data).then(() => {
+              console.log('Auto-saved summary data to Firebase');
+            }).catch(error => {
+              console.warn('Error auto-saving summary to Firebase:', error);
+            });
+          } catch (error) {
+            console.warn('Error accessing Firebase for auto-save:', error);
           }
         }
       }
@@ -1957,26 +1980,6 @@
       else if (msg.type === 'tracking-update') {
         // Handle tracking updates by updating our local data
         handleTrackingUpdate(msg);
-      }
-      // Add handling for summary data
-      else if (msg.type === 'summary-data') {
-        console.log('Received summary data from plugin');
-        
-        // Store the data in memory
-        summaryData = msg.data;
-        
-        // Try to save to localStorage as backup, but handle errors gracefully
-        if (isLocalStorageAvailable()) {
-          try {
-            localStorage.setItem('figmaTimeTrackSummary_backup', JSON.stringify(summaryData));
-            localStorage.setItem('figmaTimeTrackSummaryTimestamp', Date.now().toString());
-          } catch (e) {
-            console.warn('Could not save to localStorage:', e);
-          }
-        }
-        
-        // Update the summary display
-        updateSummaryDisplay(msg.data);
       }
     };
 
@@ -2541,26 +2544,29 @@
             // Special handling for summary tab
             if (tabId === 'summary-tab') {
               console.log('Summary tab activated');
-              document.getElementById('summary-loading').textContent = 'Loading summary...';
               
-              // Use stored data immediately if available
-              if (summaryData) {
-                console.log('Using stored summary data for immediate display');
+              // Display any in-memory data immediately for a responsive feel
+              if (summaryData && Object.keys(summaryData).length > 0) {
                 updateSummaryDisplay(summaryData);
-              } else {
-                // Try loading from localStorage
-                const savedData = loadSummaryFromLocalStorage();
-                if (savedData) {
-                  console.log('Using localStorage data for immediate display');
-                  summaryData = savedData;
-                  updateSummaryDisplay(savedData);
-                }
               }
               
-              // Request fresh data
-              setTimeout(() => {
-                requestSummaryRefresh();
-              }, 200);
+              // Then fetch fresh data from Firebase if available
+              if (firebaseInitialized && userId) {
+                loadSummaryFromFirebase(true);
+              } else if (activelyInitializingFirebase) {
+                // If Firebase is initializing, wait briefly and check again
+                setTimeout(() => {
+                  if (firebaseInitialized && userId) {
+                    loadSummaryFromFirebase(true);
+                  } else {
+                    // Still not ready, use backup or request from plugin
+                    useBackupData();
+                  }
+                }, 2000);
+              } else {
+                // Firebase not available, use backup or request from plugin
+                useBackupData();
+              }
             }
           }
         });
@@ -2910,7 +2916,30 @@
       
       // Handle specific tabs
       if (tabId === 'summary-tab') {
-        handleSummaryTabActivation();
+        console.log('Summary tab activated');
+        
+        // Display any in-memory data immediately for a responsive feel
+        if (summaryData && Object.keys(summaryData).length > 0) {
+          updateSummaryDisplay(summaryData);
+        }
+        
+        // Then fetch fresh data from Firebase if available
+        if (firebaseInitialized && userId) {
+          loadSummaryFromFirebase(true);
+        } else if (activelyInitializingFirebase) {
+          // If Firebase is initializing, wait briefly and check again
+          setTimeout(() => {
+            if (firebaseInitialized && userId) {
+              loadSummaryFromFirebase(true);
+            } else {
+              // Still not ready, use backup or request from plugin
+              useBackupData();
+            }
+          }, 2000);
+        } else {
+          // Firebase not available, use backup or request from plugin
+          useBackupData();
+        }
       }
       else if (tabId === 'tracking-tab') {
         // Anything special for tracking tab
@@ -2927,7 +2956,7 @@
         if (summaryData && Object.keys(summaryData).length > 0) {
           console.log('Using in-memory summary data');
           updateSummaryDisplay(summaryData, 'Memory Cache');
-          return;
+          return true;
         }
         
         // Then try localStorage if available
@@ -2937,18 +2966,23 @@
             console.log('Using localStorage backup data');
             summaryData = savedData; // Update in-memory copy
             updateSummaryDisplay(savedData, 'Local Storage');
-            return;
+            return true;
           }
         }
         
-        // If still no data, request from plugin
+        // If still no data, request from plugin as final backup
         console.log('No backup data available, requesting from plugin');
         parent.postMessage({ pluginMessage: { type: 'get-summary', immediate: true } }, '*');
+        
+        // Show temporary loading state while waiting for plugin data
+        document.getElementById('summary-loading').textContent = 'Requesting data from plugin...';
+        return false;
         
       } catch (e) {
         console.error('Error using backup data:', e);
         // Request from plugin as last resort
         parent.postMessage({ pluginMessage: { type: 'get-summary', immediate: true } }, '*');
+        return false;
       }
     }
     
