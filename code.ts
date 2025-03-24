@@ -172,6 +172,13 @@ async function initializePlugin() {
   
   // Check current file immediately
   checkCurrentFile();
+  
+  // Send initial data to UI
+  updateTrackingStatus();
+  figma.ui.postMessage({
+    type: 'summary-data',
+    data: files
+  });
 }
 
 // Handle user activity
@@ -254,7 +261,7 @@ async function stopTracking() {
   const duration = endTime - trackingStartTime;
   
   // Save immediately when stopping
-  await saveSummaryToClientStorage(files);
+  await saveData();
   
   // Show stop tracking notification in background
   const timeTracked = formatDuration(Math.floor(duration / 1000));
@@ -436,10 +443,24 @@ function checkForRecentChanges(): boolean {
 // Save data to client storage
 async function saveData() {
   try {
+    if (!files || typeof files !== 'object') {
+      console.error('Invalid files object, resetting to empty state');
+      files = {};
+    }
+    
     await saveSummaryToClientStorage(files);
     lastSaveTime = Date.now();
+    
+    // Send update to UI after successful save
+    if (isUiVisible) {
+      figma.ui.postMessage({
+        type: 'summary-data',
+        data: files
+      });
+    }
   } catch (error) {
     console.error('Error saving data:', error);
+    figma.notify('Error saving tracking data', { error: true });
   }
 }
 
@@ -459,13 +480,48 @@ async function loadSummaryFromClientStorage() {
     const summaryData = await figma.clientStorage.getAsync(SUMMARY_STORAGE_KEY);
     const lastUpdate = await figma.clientStorage.getAsync(LAST_UPDATE_KEY);
     console.log('Summary loaded from client storage, last updated:', new Date(lastUpdate));
-    if (summaryData) {
+    
+    // Validate and clean the loaded data
+    if (summaryData && typeof summaryData === 'object') {
+      // Clean up any invalid entries
+      Object.keys(summaryData).forEach(fileId => {
+        const file = summaryData[fileId];
+        if (!file || !file.pages || typeof file.pages !== 'object') {
+          delete summaryData[fileId];
+          return;
+        }
+        
+        // Clean up invalid pages
+        Object.keys(file.pages).forEach(pageId => {
+          const page = file.pages[pageId];
+          if (!page || !page.id || !page.name || typeof page.totalTime !== 'number') {
+            delete file.pages[pageId];
+          }
+        });
+        
+        // Recalculate file total time
+        file.totalTime = Object.values(file.pages).reduce((total, p: any) => total + (p.totalTime || 0), 0);
+      });
+      
       files = summaryData;
+      
+      // Send immediate update to UI
+      if (isUiVisible) {
+        figma.ui.postMessage({
+          type: 'summary-data',
+          data: files
+        });
+      }
+    } else {
+      console.log('No valid summary data found, initializing empty state');
+      files = {};
     }
-    return summaryData || {};
+    
+    return files;
   } catch (error) {
     console.error('Error loading from client storage:', error);
-    return {};
+    files = {};
+    return files;
   }
 }
 
@@ -545,16 +601,42 @@ function updateCurrentSessionTime() {
   
   const now = Date.now();
   const elapsedTime = now - lastActivityTime;
+  
+  // Sanity check for elapsed time
+  if (elapsedTime <= 0 || elapsedTime > INACTIVE_THRESHOLD) {
+    console.warn('Invalid elapsed time:', elapsedTime);
+    lastActivityTime = now;
+    return;
+  }
+  
   lastActivityTime = now;
   
-  if (files[activeFileId] && files[activeFileId].pages[activePage.id]) {
+  try {
+    if (!files[activeFileId]) {
+      files[activeFileId] = {
+        id: activeFileId,
+        name: activeFileName,
+        pages: {},
+        totalTime: 0,
+        lastUpdated: now
+      };
+    }
+    
+    if (!files[activeFileId].pages[activePage.id]) {
+      files[activeFileId].pages[activePage.id] = {
+        id: activePage.id,
+        fileId: activeFileId,
+        name: activePage.name,
+        totalTime: 0,
+        lastUpdated: now
+      };
+    }
+    
     const file = files[activeFileId];
     const page = file.pages[activePage.id];
     
-    // Calculate the increment since last update
-    const previousTotal = page.totalTime || 0;
-    const timeIncrement = elapsedTime;
-    page.totalTime = previousTotal + timeIncrement;
+    // Update page time
+    page.totalTime += elapsedTime;
     page.lastUpdated = now;
     
     // Update file total time
@@ -566,16 +648,19 @@ function updateCurrentSessionTime() {
       saveData();
     }
     
-    // Send update to UI with recently updated page info
+    // Always send update to UI
     figma.ui.postMessage({
       type: 'summary-data',
       data: files,
-      currentFileId: activeFileId,
       recentlyUpdatedPage: {
         fileId: activeFileId,
         pageId: activePage.id,
         timestamp: now
       }
     });
+  } catch (error) {
+    console.error('Error updating session time:', error);
+    // Try to recover by resetting the tracking state
+    stopTracking();
   }
 }
