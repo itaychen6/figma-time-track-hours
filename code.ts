@@ -14,6 +14,9 @@ const BACKGROUND_CHECK_INTERVAL = 3000; // Check background activity every 3 sec
 // Add new constant for auto-start detection
 const AUTO_START_THRESHOLD = 2000; // Time in ms to detect sustained activity before auto-starting
 
+// Add new constant for recent update threshold
+const RECENT_UPDATE_THRESHOLD = 300000; // 5 minutes in milliseconds
+
 // Storage keys
 const SUMMARY_STORAGE_KEY = 'timeTrackingSummary';
 const LAST_UPDATE_KEY = 'lastSummaryUpdate';
@@ -485,7 +488,7 @@ function checkBackgroundActivity() {
     if (hasSelection || viewportChanged || hasRecentChanges) {
       lastActivityTime = now;
       
-      // Handle auto-start tracking
+      // Handle auto-start tracking with immediate feedback
       if (!isTracking && backgroundTracking) {
         if (!sustainedActivityStart) {
           sustainedActivityStart = now;
@@ -493,6 +496,10 @@ function checkBackgroundActivity() {
           showBackgroundNotification('Activity detected, starting time tracking...', 3000);
           startTracking();
           sustainedActivityStart = 0;
+          
+          // Force an immediate time update
+          updateCurrentSessionTime();
+          saveData();
         }
       }
     } else {
@@ -503,11 +510,16 @@ function checkBackgroundActivity() {
     if (isTracking) {
       updateCurrentSessionTime();
       
-      // Show periodic notifications
+      // Show periodic notifications with more details
       if (!isUiVisible && (now - lastNotificationTime > NOTIFICATION_INTERVAL)) {
         const timeTracked = formatDuration(Math.floor((now - trackingStartTime) / 1000));
-        showBackgroundNotification(`Still tracking time: ${timeTracked} on "${activePageName}"`, 3000);
+        const totalPageTime = formatDuration(Math.floor((files[activeFileId]?.pages[activePage]?.totalTime || 0) / 1000));
+        showBackgroundNotification(
+          `Still tracking time on "${activePageName}"\nCurrent session: ${timeTracked}\nTotal page time: ${totalPageTime}`, 
+          5000
+        );
         lastNotificationTime = now;
+        saveData();
       }
     }
   } catch (error) {
@@ -520,7 +532,8 @@ function updateCurrentSessionTime() {
   if (!isTracking || !activeFileId || !activePage) return;
   
   const now = Date.now();
-  const currentDuration = now - trackingStartTime;
+  const elapsedTime = now - lastActivityTime;
+  lastActivityTime = now;
   
   if (files[activeFileId] && files[activeFileId].pages[activePage]) {
     const file = files[activeFileId];
@@ -528,7 +541,8 @@ function updateCurrentSessionTime() {
     
     // Calculate the increment since last update
     const previousTotal = page.totalTime || 0;
-    page.totalTime = previousTotal + (now - Math.max(trackingStartTime, page.lastUpdated));
+    const timeIncrement = elapsedTime;
+    page.totalTime = previousTotal + timeIncrement;
     page.lastUpdated = now;
     
     // Update file total time
@@ -540,13 +554,16 @@ function updateCurrentSessionTime() {
       saveData();
     }
     
-    // Update UI if visible
-    if (isUiVisible) {
-      figma.ui.postMessage({
-        type: 'summary-data',
-        data: files,
-        currentFileId: activeFileId
-      });
-    }
+    // Send update to UI with recently updated page info
+    figma.ui.postMessage({
+      type: 'summary-data',
+      data: files,
+      currentFileId: activeFileId,
+      recentlyUpdatedPage: {
+        fileId: activeFileId,
+        pageId: activePage,
+        timestamp: now
+      }
+    });
   }
 }

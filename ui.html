@@ -423,7 +423,7 @@
     }
 
     // Update summary display
-    function updateSummaryDisplay(summaryData) {
+    function updateSummaryDisplay(summaryData, recentlyUpdatedPage) {
       const container = document.getElementById('summary-content');
       if (!container) return;
       
@@ -493,6 +493,7 @@
         pageElement.style.backgroundColor = '#f5f5f5';
         pageElement.style.borderRadius = '4px';
         pageElement.style.fontSize = '14px';
+        pageElement.style.transition = 'all 0.3s ease';
 
         const pageName = document.createElement('div');
         pageName.style.flex = '1';
@@ -504,8 +505,20 @@
         pageTime.style.color = '#666';
         pageTime.textContent = formatDuration(Math.floor(page.totalTime / 1000));
 
+        // Check if this is the recently updated page
+        const isRecentlyUpdated = recentlyUpdatedPage && 
+                                recentlyUpdatedPage.fileId === page.fileId && 
+                                recentlyUpdatedPage.pageId === page.id &&
+                                (now - recentlyUpdatedPage.timestamp) < 300000; // 5 minutes
+
+        if (isRecentlyUpdated) {
+          pageElement.style.backgroundColor = '#E3F2FD';
+          pageElement.style.borderLeft = '3px solid #2196F3';
+          pageTime.style.color = '#2196F3';
+          pageTime.style.fontWeight = '500';
+        }
         // Add highlight for today's pages
-        if (page.lastUpdated >= todayStart.getTime()) {
+        else if (page.lastUpdated >= todayStart.getTime()) {
           pageElement.style.backgroundColor = '#f8f8f8';
           pageElement.style.borderLeft = '3px solid #18A0FB';
         }
@@ -549,7 +562,7 @@
         }
       }
       else if (msg.type === 'summary-data') {
-        updateSummaryDisplay(msg.data);
+        updateSummaryDisplay(msg.data, msg.recentlyUpdatedPage);
       }
       else if (msg.type === 'file-changed') {
         document.getElementById('file-name').textContent = truncateString(msg.fileName, 30);
