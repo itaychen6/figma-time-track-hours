@@ -260,6 +260,98 @@
       color: #666;
       margin-left: 8px;
     }
+
+    .summary-container {
+      display: flex;
+      flex-direction: column;
+      height: 100%;
+      max-height: calc(100vh - 40px); /* Account for header */
+    }
+
+    .today-total-header {
+      position: sticky;
+      top: 0;
+      background-color: #f0f7ff;
+      padding: 12px;
+      border-radius: 6px;
+      margin-bottom: 16px;
+      box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
+      z-index: 2;
+    }
+
+    .today-total-text {
+      font-size: 16px;
+      font-weight: 500;
+      color: #18A0FB;
+    }
+
+    .pages-list-container {
+      flex: 1;
+      overflow-y: auto;
+      padding: 0 4px;
+      margin: 0 -4px;
+      max-height: 300px; /* Show about 5 items before scrolling */
+    }
+
+    .page-item {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 8px 12px;
+      background-color: #f5f5f5;
+      border-radius: 4px;
+      margin-bottom: 8px;
+      transition: all 0.2s ease;
+    }
+
+    .page-item:hover {
+      background-color: #f0f0f0;
+      transform: translateX(2px);
+    }
+
+    .page-item.today {
+      background-color: #f8f8f8;
+      border-left: 3px solid #18A0FB;
+    }
+
+    .page-name {
+      font-weight: 500;
+      font-size: 14px;
+      color: #333;
+      flex: 1;
+    }
+
+    .page-time {
+      font-size: 14px;
+      color: #666;
+      margin-left: 12px;
+    }
+
+    /* Scrollbar styling */
+    .pages-list-container::-webkit-scrollbar {
+      width: 6px;
+    }
+
+    .pages-list-container::-webkit-scrollbar-track {
+      background: #f1f1f1;
+      border-radius: 3px;
+    }
+
+    .pages-list-container::-webkit-scrollbar-thumb {
+      background: #ccc;
+      border-radius: 3px;
+    }
+
+    .pages-list-container::-webkit-scrollbar-thumb:hover {
+      background: #999;
+    }
+
+    .no-data {
+      text-align: center;
+      color: #666;
+      padding: 20px;
+      font-style: italic;
+    }
   </style>
 </head>
 <body>
@@ -428,13 +520,14 @@
       if (!container) return;
       
       container.innerHTML = '';
+      container.className = 'summary-container';
       
       if (!summaryData || Object.keys(summaryData).length === 0) {
-        container.innerHTML = '<div class="file-summary">No tracking data available</div>';
+        container.innerHTML = '<div class="no-data">No tracking data available</div>';
         return;
       }
 
-      // Calculate today's total time (6 AM to 6 AM)
+      // Calculate today's total (6 AM to 6 AM)
       const now = new Date();
       const todayStart = new Date(now);
       todayStart.setHours(6, 0, 0, 0);
@@ -445,7 +538,7 @@
       let todayTotal = 0;
       const allPages = [];
 
-      // Collect all pages and calculate today's total
+      // Collect pages and calculate today's total
       Object.values(summaryData).forEach(file => {
         if (!file.pages) return;
         
@@ -460,63 +553,48 @@
       });
 
       // Create today's total header
-      const totalHeader = document.createElement('div');
-      totalHeader.className = 'today-total';
-      totalHeader.style.fontSize = '16px';
-      totalHeader.style.fontWeight = '500';
-      totalHeader.style.marginBottom = '16px';
-      totalHeader.style.padding = '12px';
-      totalHeader.style.backgroundColor = '#f0f7ff';
-      totalHeader.style.borderRadius = '6px';
-      totalHeader.style.color = '#18A0FB';
-      totalHeader.textContent = `Today Total: ${formatDuration(Math.floor(todayTotal / 1000))}`;
-      container.appendChild(totalHeader);
+      const headerDiv = document.createElement('div');
+      headerDiv.className = 'today-total-header';
+      headerDiv.innerHTML = `
+        <div class="today-total-text">
+          Today Total: ${formatDuration(Math.floor(todayTotal / 1000))}
+        </div>
+      `;
+      container.appendChild(headerDiv);
 
-      // Sort all pages by total time
+      // Create scrollable pages list
+      const pagesListContainer = document.createElement('div');
+      pagesListContainer.className = 'pages-list-container';
+
+      // Sort pages by time (most tracked first)
       const sortedPages = allPages
         .sort((a, b) => b.totalTime - a.totalTime);
 
-      // Create pages list
-      const pagesContainer = document.createElement('div');
-      pagesContainer.className = 'pages-list';
-      pagesContainer.style.display = 'flex';
-      pagesContainer.style.flexDirection = 'column';
-      pagesContainer.style.gap = '8px';
+      if (sortedPages.length === 0) {
+        pagesListContainer.innerHTML = '<div class="no-data">No pages tracked yet</div>';
+      } else {
+        sortedPages.forEach(page => {
+          const pageElement = document.createElement('div');
+          pageElement.className = 'page-item';
+          if (page.lastUpdated >= todayStart.getTime()) {
+            pageElement.classList.add('today');
+          }
 
-      sortedPages.forEach(page => {
-        const pageElement = document.createElement('div');
-        pageElement.className = 'page-summary';
-        pageElement.style.display = 'flex';
-        pageElement.style.justifyContent = 'space-between';
-        pageElement.style.alignItems = 'center';
-        pageElement.style.padding = '8px 12px';
-        pageElement.style.backgroundColor = '#f5f5f5';
-        pageElement.style.borderRadius = '4px';
-        pageElement.style.fontSize = '14px';
+          const pageName = document.createElement('div');
+          pageName.className = 'page-name';
+          pageName.textContent = truncateString(page.name, 25);
 
-        const pageName = document.createElement('div');
-        pageName.style.flex = '1';
-        pageName.style.fontWeight = '500';
-        pageName.textContent = truncateString(page.name, 25);
+          const pageTime = document.createElement('div');
+          pageTime.className = 'page-time';
+          pageTime.textContent = formatDuration(Math.floor(page.totalTime / 1000));
 
-        const pageTime = document.createElement('div');
-        pageTime.style.marginLeft = '12px';
-        pageTime.style.color = '#666';
-        pageTime.textContent = formatDuration(Math.floor(page.totalTime / 1000));
+          pageElement.appendChild(pageName);
+          pageElement.appendChild(pageTime);
+          pagesListContainer.appendChild(pageElement);
+        });
+      }
 
-        // Add highlight for today's pages
-        if (page.lastUpdated >= todayStart.getTime()) {
-          pageElement.style.backgroundColor = '#f8f8f8';
-          pageElement.style.borderLeft = '3px solid #18A0FB';
-        }
-
-        pageElement.appendChild(pageName);
-        pageElement.appendChild(pageTime);
-        pagesContainer.appendChild(pageElement);
-      });
-
-      container.appendChild(pagesContainer);
-      container.style.overflowY = 'auto';
+      container.appendChild(pagesListContainer);
     }
 
     // Set up event listeners
