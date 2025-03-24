@@ -173,6 +173,13 @@ function handleActivity() {
   }
 }
 
+// Add notification helper function
+function showBackgroundNotification(message: string, timeout: number = 2000) {
+  if (!isUiVisible) {
+    figma.notify(message, { timeout });
+  }
+}
+
 // Start time tracking
 function startTracking() {
   if (isTracking) return;
@@ -218,10 +225,8 @@ function startTracking() {
   lastNotificationTime = Date.now();
   lastActivityTime = Date.now();
   
-  // Show initial background notification
-  if (!isUiVisible) {
-    figma.notify('Started tracking time in background');
-  }
+  // Show start tracking notification in background
+  showBackgroundNotification(`Started tracking time on "${activePageName}"`, 3000);
   
   updateTrackingStatus();
   saveData();
@@ -251,11 +256,9 @@ async function stopTracking() {
     // Save immediately when stopping
     await saveSummaryToClientStorage(files);
     
-    // Notify if in background
-    if (!isUiVisible) {
-      const timeTracked = formatDuration(Math.floor(duration / 1000));
-      figma.notify(`Stopped tracking. Time tracked: ${timeTracked}`);
-    }
+    // Show stop tracking notification in background
+    const timeTracked = formatDuration(Math.floor(duration / 1000));
+    showBackgroundNotification(`Stopped tracking "${activePageName}"\nTime tracked: ${timeTracked}`, 3000);
     
     // Update UI if visible
     if (isUiVisible) {
@@ -316,6 +319,8 @@ async function handleFileChange(newFileId: string, newPageId: string, newFileNam
     // If tracking was active, stop it for the previous file/page
     if (isTracking) {
       await stopTracking();
+      // Show page change notification in background
+      showBackgroundNotification(`Switched from "${activePageName}" to "${newPageName}"`, 3000);
     }
     
     // Update active file and page info
