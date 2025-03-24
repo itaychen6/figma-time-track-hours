@@ -244,7 +244,7 @@
     </div>
   </div>
 
-<script>
+  <script>
     let isTracking = false;
     let trackingStartTime = 0;
     let timerInterval;
@@ -360,69 +360,49 @@
         return;
       }
       
-      console.log('Processing files for display:', Object.keys(summaryData));
-      
       // Sort files by total time (descending)
-      const sortedFiles = Object.entries(summaryData)
-        .filter(([_, file]) => file && file.totalTime > 0)
-        .sort(([_, a], [_, b]) => (b.totalTime || 0) - (a.totalTime || 0))
-        .map(([fileId, file]) => ({...file, fileId}));
-      
-      console.log('Sorted files:', sortedFiles.map(f => f.name));
+      const sortedFiles = Object.values(summaryData)
+        .filter(file => file && file.totalTime > 0)
+        .sort((a, b) => (b.totalTime || 0) - (a.totalTime || 0));
       
       sortedFiles.forEach(file => {
         const fileElement = document.createElement('div');
         fileElement.className = 'file-summary';
-        fileElement.style.marginBottom = '16px';
-        fileElement.style.background = '#f8f8f8';
-        fileElement.style.borderRadius = '8px';
-        fileElement.style.overflow = 'hidden';
         
-        // File header
+        // File header with name and total time
         const fileHeader = document.createElement('div');
         fileHeader.className = 'file-header';
         fileHeader.style.display = 'flex';
         fileHeader.style.justifyContent = 'space-between';
         fileHeader.style.alignItems = 'center';
-        fileHeader.style.padding = '12px 16px';
-        fileHeader.style.background = '#e8e8e8';
-        fileHeader.style.borderBottom = '1px solid #ddd';
+        fileHeader.style.marginBottom = '8px';
         
         const nameElement = document.createElement('div');
         nameElement.className = 'file-name';
         nameElement.style.flex = '1';
-        nameElement.style.fontWeight = '600';
-        nameElement.style.fontSize = '14px';
-        nameElement.textContent = truncateString(file.name, 35);
+        nameElement.textContent = truncateString(file.name, 30);
         
         const timeElement = document.createElement('div');
         timeElement.className = 'file-time';
-        timeElement.style.marginLeft = '12px';
-        timeElement.style.color = '#666';
-        timeElement.style.fontWeight = '500';
+        timeElement.style.marginLeft = '8px';
         timeElement.textContent = formatDuration(Math.floor(file.totalTime / 1000));
         
         fileHeader.appendChild(nameElement);
         fileHeader.appendChild(timeElement);
         fileElement.appendChild(fileHeader);
         
-        // Pages container
+        // Add pages that belong to this file
         if (file.pages && Object.keys(file.pages).length > 0) {
           const pagesContainer = document.createElement('div');
           pagesContainer.className = 'pages-container';
-          pagesContainer.style.padding = '8px 16px';
+          pagesContainer.style.marginLeft = '16px';
+          pagesContainer.style.borderLeft = '2px solid #e0e0e0';
+          pagesContainer.style.paddingLeft = '12px';
           
-          // Filter and sort pages for this file
-          const sortedPages = Object.entries(file.pages)
-            .filter(([pageKey, page]) => {
-              return page && 
-                     page.totalTime > 0 && 
-                     pageKey.startsWith(file.fileId);
-            })
-            .sort(([_, a], [_, b]) => (b.totalTime || 0) - (a.totalTime || 0))
-            .map(([_, page]) => page);
-          
-          console.log(`Pages for ${file.name}:`, sortedPages.map(p => p.name));
+          // Filter and sort pages that belong to this file
+          const sortedPages = Object.values(file.pages)
+            .filter(page => page && page.totalTime > 0 && page.fileId === file.id)
+            .sort((a, b) => (b.totalTime || 0) - (a.totalTime || 0));
           
           if (sortedPages.length > 0) {
             sortedPages.forEach(page => {
@@ -431,22 +411,16 @@
               pageElement.style.display = 'flex';
               pageElement.style.justifyContent = 'space-between';
               pageElement.style.alignItems = 'center';
-              pageElement.style.padding = '8px 12px';
-              pageElement.style.margin = '4px 0';
-              pageElement.style.background = 'white';
-              pageElement.style.borderRadius = '4px';
-              pageElement.style.border = '1px solid #eee';
+              pageElement.style.marginBottom = '4px';
+              pageElement.style.fontSize = '13px';
+              pageElement.style.color = '#666';
               
               const pageName = document.createElement('div');
               pageName.style.flex = '1';
-              pageName.style.fontSize = '13px';
-              pageName.style.color = '#444';
-              pageName.textContent = truncateString(page.name, 30);
+              pageName.textContent = truncateString(page.name, 25);
               
               const pageTime = document.createElement('div');
-              pageTime.style.marginLeft = '12px';
-              pageTime.style.fontSize = '13px';
-              pageTime.style.color = '#666';
+              pageTime.style.marginLeft = '8px';
               pageTime.textContent = formatDuration(Math.floor(page.totalTime / 1000));
               
               pageElement.appendChild(pageName);
@@ -461,9 +435,8 @@
         container.appendChild(fileElement);
       });
       
-      // Enable smooth scrolling
+      // Enable scrolling if needed
       container.style.overflowY = 'auto';
-      container.style.scrollBehavior = 'smooth';
     }
 
     // Set up event listeners
@@ -525,7 +498,7 @@
 
     // Tell the plugin we're ready
     parent.postMessage({ pluginMessage: { type: 'ui-loaded' } }, '*');
-</script>
+  </script>
 </body>
 </html>
 

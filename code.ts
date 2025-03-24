@@ -12,6 +12,27 @@ const SUMMARY_STORAGE_KEY = 'timeTrackingSummary';
 const LAST_UPDATE_KEY = 'lastSummaryUpdate';
 const BACKGROUND_TRACKING_KEY = 'backgroundTracking';
 
+// Add type definitions at the top of the file
+interface PageData {
+  id: string;
+  name: string;
+  totalTime: number;
+  fileId: string;
+  lastUpdated: number;
+}
+
+interface FileData {
+  id: string;
+  name: string;
+  pages: { [key: string]: PageData };
+  totalTime: number;
+  lastUpdated: number;
+}
+
+interface Files {
+  [key: string]: FileData;
+}
+
 // Global variables
 let isTracking = false;
 let isUiVisible = false;
@@ -25,7 +46,7 @@ let lastSaveTime = Date.now();
 let fileCheckInterval: number;
 let activityCheckInterval: number;
 let saveInterval: number;
-let files: { [fileId: string]: any } = {};
+let files: Files = {};
 let trackingStartTime = 0;
 
 // Plugin initialization
@@ -97,11 +118,7 @@ async function initializePlugin() {
   console.log('Initializing plugin');
   
   // Load summary from client storage
-  const storedData = await loadSummaryFromClientStorage();
-  if (storedData) {
-    files = storedData;
-    console.log('Loaded files from storage:', Object.keys(files));
-  }
+  await loadSummaryFromClientStorage();
   
   // Load background tracking preference
   const bgTracking = await figma.clientStorage.getAsync(BACKGROUND_TRACKING_KEY);
@@ -116,12 +133,6 @@ async function initializePlugin() {
   
   // Check current file immediately
   checkCurrentFile();
-  
-  // Send initial data to UI
-  figma.ui.postMessage({
-    type: 'summary-data',
-    data: files
-  });
 }
 
 // Handle user activity
@@ -138,9 +149,9 @@ function startTracking() {
   if (isTracking) return;
   
   isTracking = true;
-  console.log('Started tracking for file:', activeFileId);
+  console.log('Started tracking');
   
-  // Create new file entry if it doesn't exist
+  // Create or update file entry with proper page structure
   if (!files[activeFileId]) {
     files[activeFileId] = {
       id: activeFileId,
@@ -149,20 +160,17 @@ function startTracking() {
       totalTime: 0,
       lastUpdated: Date.now()
     };
-    console.log('Created new file entry:', activeFileName);
   }
   
-  // Create new page entry if it doesn't exist
-  const pageKey = `${activeFileId}_${activePage}`;
-  if (!files[activeFileId].pages[pageKey]) {
-    files[activeFileId].pages[pageKey] = {
+  // Create or update page entry with proper nesting
+  if (!files[activeFileId].pages[activePage]) {
+    files[activeFileId].pages[activePage] = {
       id: activePage,
       name: activePageName,
       totalTime: 0,
-      fileId: activeFileId,
+      fileId: activeFileId, // Link page to its parent file
       lastUpdated: Date.now()
     };
-    console.log('Created new page entry:', activePageName);
   }
   
   trackingStartTime = Date.now();
@@ -178,18 +186,25 @@ async function stopTracking() {
   const endTime = Date.now();
   const duration = endTime - trackingStartTime;
   
-  // Update tracking data
+  // Update tracking data with proper file and page structure
   if (activeFileId && files[activeFileId]) {
     const file = files[activeFileId];
     file.totalTime = (file.totalTime || 0) + duration;
     file.lastUpdated = Date.now();
     
-    const pageKey = `${activeFileId}_${activePage}`;
-    if (activePage && file.pages && file.pages[pageKey]) {
-      const page = file.pages[pageKey];
+    if (activePage && file.pages && file.pages[activePage]) {
+      const page = file.pages[activePage];
       page.totalTime = (page.totalTime || 0) + duration;
       page.lastUpdated = Date.now();
+      page.fileId = activeFileId; // Ensure page is linked to correct file
     }
+    
+    // Clean up any orphaned pages
+    Object.values(file.pages).forEach((page: PageData) => {
+      if (!page.fileId || page.fileId !== activeFileId) {
+        delete file.pages[page.id];
+      }
+    });
     
     // Save to client storage
     await saveSummaryToClientStorage(files);
@@ -208,7 +223,7 @@ async function stopTracking() {
     isTracking: false 
   });
   
-  console.log('Stopped tracking. Updated file:', activeFileName);
+  console.log('Stopped tracking');
 }
 
 // Update UI with current tracking status
@@ -243,7 +258,7 @@ function checkCurrentFile() {
 
 // Handle file or page change
 async function handleFileChange(newFileId, newPageId, newFileName, newPageName) {
-  console.log(`File/page changed: ${activeFileId}/${activePage} -> ${newFileId}/${newPageId}`);
+  console.log(`File changed: ${activeFileId} -> ${newFileId}`);
   
   if (isTracking) {
     await stopTracking();
@@ -254,7 +269,7 @@ async function handleFileChange(newFileId, newPageId, newFileName, newPageName) 
   activeFileName = newFileName;
   activePageName = newPageName;
   
-  // Ensure file exists in storage
+  // Ensure the file and page structure exists
   if (!files[activeFileId]) {
     files[activeFileId] = {
       id: activeFileId,
@@ -263,26 +278,27 @@ async function handleFileChange(newFileId, newPageId, newFileName, newPageName) 
       totalTime: 0,
       lastUpdated: Date.now()
     };
-    console.log('Created new file entry on change:', activeFileName);
   }
   
-  // Ensure page exists in file with unique key
-  const pageKey = `${activeFileId}_${activePage}`;
-  if (!files[activeFileId].pages[pageKey]) {
-    files[activeFileId].pages[pageKey] = {
+  if (!files[activeFileId].pages[activePage]) {
+    files[activeFileId].pages[activePage] = {
       id: activePage,
       name: activePageName,
       totalTime: 0,
-      fileId: activeFileId,
+      fileId: activeFileId, // Ensure page is linked to correct file
       lastUpdated: Date.now()
     };
-    console.log('Created new page entry on change:', activePageName);
   }
   
-  // Save the new entries
-  await saveSummaryToClientStorage(files);
+  // Clean up any orphaned pages in the current file
+  if (files[activeFileId].pages) {
+    Object.values(files[activeFileId].pages).forEach((page: PageData) => {
+      if (!page.fileId || page.fileId !== activeFileId) {
+        delete files[activeFileId].pages[page.id];
+      }
+    });
+  }
   
-  // Update UI with file change
   figma.ui.postMessage({
     type: 'file-changed',
     fileId: activeFileId,
@@ -290,13 +306,6 @@ async function handleFileChange(newFileId, newPageId, newFileName, newPageName) 
     pageId: activePage,
     pageName: activePageName,
     resetTimer: true
-  });
-  
-  // Send updated summary data
-  figma.ui.postMessage({
-    type: 'summary-data',
-    data: files,
-    currentFileId: activeFileId
   });
   
   if (backgroundTracking || isUiVisible) {
@@ -329,7 +338,7 @@ async function saveSummaryToClientStorage(summaryData: any) {
   try {
     await figma.clientStorage.setAsync(SUMMARY_STORAGE_KEY, summaryData);
     await figma.clientStorage.setAsync(LAST_UPDATE_KEY, Date.now());
-    console.log('Summary saved to client storage. Files:', Object.keys(summaryData));
+    console.log('Summary saved to client storage');
   } catch (error) {
     console.error('Error saving to client storage:', error);
   }
@@ -339,7 +348,10 @@ async function loadSummaryFromClientStorage() {
   try {
     const summaryData = await figma.clientStorage.getAsync(SUMMARY_STORAGE_KEY);
     const lastUpdate = await figma.clientStorage.getAsync(LAST_UPDATE_KEY);
-    console.log('Summary loaded from client storage, files:', summaryData ? Object.keys(summaryData) : 'none');
+    console.log('Summary loaded from client storage, last updated:', new Date(lastUpdate));
+    if (summaryData) {
+      files = summaryData;
+    }
     return summaryData || {};
   } catch (error) {
     console.error('Error loading from client storage:', error);
