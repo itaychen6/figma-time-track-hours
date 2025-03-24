@@ -175,29 +175,27 @@ async function stopTracking() {
   const endTime = Date.now();
   const duration = endTime - trackingStartTime;
   
-  // Update tracking data
   if (activeFileId && files[activeFileId]) {
-    // Update file total time
     const file = files[activeFileId];
+    
+    // Update file total time
     file.totalTime = (file.totalTime || 0) + duration;
     file.lastUpdated = Date.now();
     
     // Update page total time
-    if (activePage && file.pages && file.pages[activePage]) {
+    if (activePage && file.pages[activePage]) {
       const page = file.pages[activePage];
       page.totalTime = (page.totalTime || 0) + duration;
       page.lastUpdated = Date.now();
-      console.log(`Updated time for page ${page.name} in file ${file.name}: ${page.totalTime}`);
     }
     
     // Save to client storage
     await saveSummaryToClientStorage(files);
     
-    // Send updated summary to UI with current file context
+    // Send updated summary to UI
     figma.ui.postMessage({
       type: 'summary-data',
-      data: files,
-      currentFileId: activeFileId
+      data: files
     });
   }
   
@@ -254,7 +252,7 @@ async function handleFileChange(newFileId, newPageId, newFileName, newPageName) 
   activeFileName = newFileName;
   activePageName = newPageName;
   
-  // Ensure file exists in storage with its own data structure
+  // Create a new file entry if it doesn't exist
   if (!files[activeFileId]) {
     files[activeFileId] = {
       id: activeFileId,
@@ -263,11 +261,9 @@ async function handleFileChange(newFileId, newPageId, newFileName, newPageName) 
       totalTime: 0,
       lastUpdated: Date.now()
     };
-    
-    await saveSummaryToClientStorage(files);
   }
   
-  // Ensure page exists in file with its own tracking data
+  // Create a new page entry if it doesn't exist
   if (!files[activeFileId].pages[activePage]) {
     files[activeFileId].pages[activePage] = {
       id: activePage,
@@ -276,9 +272,10 @@ async function handleFileChange(newFileId, newPageId, newFileName, newPageName) 
       fileId: activeFileId,
       lastUpdated: Date.now()
     };
-    
-    await saveSummaryToClientStorage(files);
   }
+  
+  // Save the updated data structure
+  await saveSummaryToClientStorage(files);
   
   // Update UI with file change
   figma.ui.postMessage({
@@ -290,11 +287,10 @@ async function handleFileChange(newFileId, newPageId, newFileName, newPageName) 
     resetTimer: true
   });
   
-  // Send updated summary data with current context
+  // Send updated summary data
   figma.ui.postMessage({
     type: 'summary-data',
-    data: files,
-    currentFileId: activeFileId
+    data: files
   });
   
   if (backgroundTracking || isUiVisible) {

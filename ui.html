@@ -360,110 +360,78 @@
         return;
       }
       
-      console.log('Processing summary data:', Object.keys(summaryData).length, 'files');
-      
-      // Sort files by total time (descending)
+      // Sort files by total time
       const sortedFiles = Object.entries(summaryData)
-        .filter(([_, file]) => file && typeof file === 'object' && file.totalTime > 0)
-        .sort(([_, a], [_, b]) => (b.totalTime || 0) - (a.totalTime || 0))
-        .map(([fileId, file]) => ({...file, id: fileId}));
-      
-      console.log('Sorted files:', sortedFiles.map(f => f.name));
+        .filter(([_, file]) => file && file.totalTime > 0)
+        .sort(([_, a], [_, b]) => b.totalTime - a.totalTime)
+        .map(([id, file]) => ({ ...file, id }));
       
       sortedFiles.forEach(file => {
-        // Create file container
-        const fileContainer = document.createElement('div');
-        fileContainer.className = 'file-summary';
-        fileContainer.style.marginBottom = '16px';
-        fileContainer.style.background = '#f8f8f8';
-        fileContainer.style.borderRadius = '8px';
-        fileContainer.style.overflow = 'hidden';
+        // Create file section
+        const fileSection = document.createElement('div');
+        fileSection.className = 'file-summary';
+        fileSection.style.marginBottom = '16px';
         
         // File header
         const fileHeader = document.createElement('div');
-        fileHeader.className = 'file-header';
-        fileHeader.style.padding = '12px';
         fileHeader.style.background = '#e8e8e8';
-        fileHeader.style.borderBottom = '1px solid #ddd';
-        fileHeader.style.display = 'flex';
-        fileHeader.style.justifyContent = 'space-between';
-        fileHeader.style.alignItems = 'center';
-        
-        const fileInfo = document.createElement('div');
-        fileInfo.style.flex = '1';
+        fileHeader.style.padding = '8px 12px';
+        fileHeader.style.borderRadius = '4px';
+        fileHeader.style.marginBottom = '8px';
         
         const fileName = document.createElement('div');
         fileName.className = 'file-name';
-        fileName.style.fontWeight = '600';
-        fileName.style.fontSize = '14px';
-        fileName.style.color = '#333';
-        fileName.textContent = truncateString(file.name, 40);
+        fileName.style.fontWeight = '500';
+        fileName.textContent = file.name;
         
         const fileTime = document.createElement('div');
         fileTime.className = 'file-time';
-        fileTime.style.fontSize = '14px';
-        fileTime.style.color = '#666';
-        fileTime.style.marginTop = '4px';
-        fileTime.textContent = `Total: ${formatDuration(Math.floor(file.totalTime / 1000))}`;
+        fileTime.textContent = `Total time: ${formatDuration(Math.floor(file.totalTime / 1000))}`;
         
-        fileInfo.appendChild(fileName);
-        fileInfo.appendChild(fileTime);
-        fileHeader.appendChild(fileInfo);
-        fileContainer.appendChild(fileHeader);
+        fileHeader.appendChild(fileName);
+        fileHeader.appendChild(fileTime);
+        fileSection.appendChild(fileHeader);
         
-        // Pages container
+        // Pages section
         if (file.pages && Object.keys(file.pages).length > 0) {
           const pagesContainer = document.createElement('div');
-          pagesContainer.className = 'pages-container';
-          pagesContainer.style.padding = '8px 12px';
+          pagesContainer.style.marginLeft = '16px';
           
-          // Get pages that belong to this file only
-          const filePages = Object.entries(file.pages)
-            .filter(([_, page]) => page && page.fileId === file.id && page.totalTime > 0)
-            .sort(([_, a], [_, b]) => (b.totalTime || 0) - (a.totalTime || 0))
-            .map(([pageId, page]) => ({...page, id: pageId}));
+          // Sort pages by total time
+          const sortedPages = Object.values(file.pages)
+            .filter(page => page && page.totalTime > 0 && page.fileId === file.id)
+            .sort((a, b) => b.totalTime - a.totalTime);
           
-          console.log(`Pages for ${file.name}:`, filePages.map(p => p.name));
+          sortedPages.forEach(page => {
+            const pageRow = document.createElement('div');
+            pageRow.style.display = 'flex';
+            pageRow.style.justifyContent = 'space-between';
+            pageRow.style.padding = '4px 8px';
+            pageRow.style.marginBottom = '4px';
+            pageRow.style.background = '#f5f5f5';
+            pageRow.style.borderRadius = '4px';
+            
+            const pageName = document.createElement('div');
+            pageName.style.flex = '1';
+            pageName.textContent = page.name;
+            
+            const pageTime = document.createElement('div');
+            pageTime.style.marginLeft = '8px';
+            pageTime.style.color = '#666';
+            pageTime.textContent = formatDuration(Math.floor(page.totalTime / 1000));
+            
+            pageRow.appendChild(pageName);
+            pageRow.appendChild(pageTime);
+            pagesContainer.appendChild(pageRow);
+          });
           
-          if (filePages.length > 0) {
-            filePages.forEach(page => {
-              const pageElement = document.createElement('div');
-              pageElement.className = 'page-summary';
-              pageElement.style.display = 'flex';
-              pageElement.style.justifyContent = 'space-between';
-              pageElement.style.alignItems = 'center';
-              pageElement.style.padding = '8px';
-              pageElement.style.marginBottom = '4px';
-              pageElement.style.background = 'white';
-              pageElement.style.borderRadius = '4px';
-              
-              const pageName = document.createElement('div');
-              pageName.style.flex = '1';
-              pageName.style.fontSize = '13px';
-              pageName.style.color = '#444';
-              pageName.textContent = truncateString(page.name, 35);
-              
-              const pageTime = document.createElement('div');
-              pageTime.style.marginLeft = '12px';
-              pageTime.style.fontSize = '13px';
-              pageTime.style.color = '#666';
-              pageTime.textContent = formatDuration(Math.floor(page.totalTime / 1000));
-              
-              pageElement.appendChild(pageName);
-              pageElement.appendChild(pageTime);
-              pagesContainer.appendChild(pageElement);
-            });
+          if (pagesContainer.children.length > 0) {
+            fileSection.appendChild(pagesContainer);
           }
-          
-          fileContainer.appendChild(pagesContainer);
         }
         
-        container.appendChild(fileContainer);
+        container.appendChild(fileSection);
       });
-      
-      // Enable smooth scrolling
-      container.style.overflowY = 'auto';
-      container.style.scrollBehavior = 'smooth';
     }
 
     // Set up event listeners
