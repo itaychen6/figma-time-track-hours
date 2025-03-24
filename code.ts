@@ -9,7 +9,7 @@ const INACTIVE_THRESHOLD = 5000; // Consider user inactive after this time (in m
 const NOTIFICATION_INTERVAL = 900000; // Show notification every 15 minutes (15 * 60 * 1000 ms)
 
 // Add new constant for background activity check
-const BACKGROUND_CHECK_INTERVAL = 3000; // Check background activity every 3 seconds
+const BACKGROUND_CHECK_INTERVAL = 5000; // Check background activity every 5 seconds
 
 // Add new constant for auto-start detection
 const AUTO_START_THRESHOLD = 2000; // Time in ms to detect sustained activity before auto-starting
@@ -47,8 +47,8 @@ interface Files {
 let isTracking = false;
 let isUiVisible = false;
 let backgroundTracking = true;
-let activeFileId = '';
-let activePage = '';
+let activeFileId: string | null = null;
+let activePage: PageNode | null = null;
 let activeFileName = '';
 let activePageName = '';
 let lastActivityTime = Date.now();
@@ -65,7 +65,7 @@ let backgroundCheckInterval: number;
 
 // Add new variables for activity detection
 let lastAutoStartCheck = Date.now();
-let sustainedActivityStart = 0;
+let sustainedActivityStart: number | null = null;
 
 // Plugin initialization
 figma.showUI(__html__, { width: 300, height: 400 });
@@ -206,7 +206,7 @@ function startTracking() {
   // Update active file and page info
   activeFileId = currentFileId;
   activeFileName = currentFileName;
-  activePage = currentPageId;
+  activePage = figma.currentPage;
   activePageName = currentPageName;
   
   // Create or update file entry
@@ -221,9 +221,9 @@ function startTracking() {
   }
   
   // Create or update page entry
-  if (!files[activeFileId].pages[activePage]) {
-    files[activeFileId].pages[activePage] = {
-      id: activePage,
+  if (!files[activeFileId].pages[activePage.id]) {
+    files[activeFileId].pages[activePage.id] = {
+      id: activePage.id,
       name: activePageName,
       totalTime: 0,
       fileId: activeFileId,
@@ -287,7 +287,7 @@ function updateTrackingStatus() {
     pageName: activePageName,
     startTime: isTracking ? trackingStartTime : null,
     fileId: activeFileId,
-    pageId: activePage
+    pageId: activePage.id
   });
 }
 
@@ -299,7 +299,7 @@ function checkCurrentFile() {
     const currentFileName = (figma.currentPage.parent as any).name;
     const currentPageName = figma.currentPage.name;
     
-    if (currentFileId !== activeFileId || currentPageId !== activePage) {
+    if (currentFileId !== activeFileId || currentPageId !== activePage.id) {
       handleFileChange(currentFileId, currentPageId, currentFileName, currentPageName);
     }
   } catch (error) {
@@ -312,7 +312,7 @@ async function handleFileChange(newFileId: string, newPageId: string, newFileNam
   console.log('File change detected:', { newFileId, newPageId, newFileName, newPageName });
   
   const fileChanged = newFileId !== activeFileId;
-  const pageChanged = newPageId !== activePage;
+  const pageChanged = newPageId !== activePage.id;
   
   if (fileChanged || pageChanged) {
     // If tracking was active, stop it for the previous file/page
@@ -324,7 +324,7 @@ async function handleFileChange(newFileId: string, newPageId: string, newFileNam
     
     // Update active file and page info
     activeFileId = newFileId;
-    activePage = newPageId;
+    activePage = figma.currentPage;
     activeFileName = newFileName;
     activePageName = newPageName;
     
@@ -340,9 +340,9 @@ async function handleFileChange(newFileId: string, newPageId: string, newFileNam
     }
     
     // Initialize or update page structure
-    if (!files[activeFileId].pages[activePage]) {
-      files[activeFileId].pages[activePage] = {
-        id: activePage,
+    if (!files[activeFileId].pages[activePage.id]) {
+      files[activeFileId].pages[activePage.id] = {
+        id: activePage.id,
         name: activePageName,
         totalTime: 0,
         fileId: activeFileId,
@@ -350,8 +350,8 @@ async function handleFileChange(newFileId: string, newPageId: string, newFileNam
       };
     } else {
       // Update page name if it changed
-      files[activeFileId].pages[activePage].name = activePageName;
-      files[activeFileId].pages[activePage].fileId = activeFileId;
+      files[activeFileId].pages[activePage.id].name = activePageName;
+      files[activeFileId].pages[activePage.id].fileId = activeFileId;
     }
     
     // Clean up any orphaned pages in the current file
@@ -404,21 +404,33 @@ function checkActivity() {
 
 // Add function to check for recent document changes
 function checkForRecentChanges(): boolean {
-  try {
-    const currentPageId = figma.currentPage.id;
-    const currentFileName = (figma.currentPage.parent as DocumentNode).name;
-    const hasSelection = figma.currentPage.selection.length > 0;
-    const viewportChanged = figma.viewport.zoom !== figma.viewport.zoom;
-    
-    // Check for any kind of activity
-    return currentPageId !== activePage || 
-           currentFileName !== activeFileName ||
-           hasSelection ||
-           viewportChanged;
-  } catch (error) {
-    console.error('Error checking for changes:', error);
-    return false;
+  const now = Date.now();
+  let hasActivity = false;
+
+  // Check selection changes
+  if (figma.currentPage.selection.length > 0) {
+    hasActivity = true;
   }
+
+  // Check viewport changes
+  const viewport = figma.viewport;
+  if (viewport.zoom !== 1 || viewport.center.x !== 0 || viewport.center.y !== 0) {
+    hasActivity = true;
+  }
+
+  // Check if current page has changed
+  if (activePage && activePage !== figma.currentPage) {
+    hasActivity = true;
+    activePage = figma.currentPage;
+  }
+
+  if (hasActivity) {
+    lastActivityTime = now;
+    return true;
+  }
+
+  // Check if we're still within activity timeout
+  return (now - lastActivityTime) < RECENT_UPDATE_THRESHOLD;
 }
 
 // Save data to client storage
@@ -476,7 +488,7 @@ function checkBackgroundActivity() {
     const currentPageName = figma.currentPage.name;
     
     // Check if file or page changed
-    if (currentFileId !== activeFileId || currentPageId !== activePage) {
+    if (currentFileId !== activeFileId || currentPageId !== activePage.id) {
       handleFileChange(currentFileId, currentPageId, currentFileName, currentPageName);
     }
     
@@ -513,7 +525,7 @@ function checkBackgroundActivity() {
       // Show periodic notifications with more details
       if (!isUiVisible && (now - lastNotificationTime > NOTIFICATION_INTERVAL)) {
         const timeTracked = formatDuration(Math.floor((now - trackingStartTime) / 1000));
-        const totalPageTime = formatDuration(Math.floor((files[activeFileId]?.pages[activePage]?.totalTime || 0) / 1000));
+        const totalPageTime = formatDuration(Math.floor((files[activeFileId]?.pages[activePage.id]?.totalTime || 0) / 1000));
         showBackgroundNotification(
           `Still tracking time on "${activePageName}"\nCurrent session: ${timeTracked}\nTotal page time: ${totalPageTime}`, 
           5000
@@ -535,9 +547,9 @@ function updateCurrentSessionTime() {
   const elapsedTime = now - lastActivityTime;
   lastActivityTime = now;
   
-  if (files[activeFileId] && files[activeFileId].pages[activePage]) {
+  if (files[activeFileId] && files[activeFileId].pages[activePage.id]) {
     const file = files[activeFileId];
-    const page = file.pages[activePage];
+    const page = file.pages[activePage.id];
     
     // Calculate the increment since last update
     const previousTotal = page.totalTime || 0;
@@ -561,7 +573,7 @@ function updateCurrentSessionTime() {
       currentFileId: activeFileId,
       recentlyUpdatedPage: {
         fileId: activeFileId,
-        pageId: activePage,
+        pageId: activePage.id,
         timestamp: now
       }
     });
