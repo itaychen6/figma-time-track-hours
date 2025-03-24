@@ -257,59 +257,80 @@ function checkCurrentFile() {
 }
 
 // Handle file or page change
-async function handleFileChange(newFileId, newPageId, newFileName, newPageName) {
-  console.log(`File changed: ${activeFileId} -> ${newFileId}`);
+async function handleFileChange(newFileId: string, newPageId: string, newFileName: string, newPageName: string) {
+  console.log('File change detected:', { newFileId, newPageId, newFileName, newPageName });
   
-  if (isTracking) {
-    await stopTracking();
-  }
+  const fileChanged = newFileId !== activeFileId;
+  const pageChanged = newPageId !== activePage;
   
-  activeFileId = newFileId;
-  activePage = newPageId;
-  activeFileName = newFileName;
-  activePageName = newPageName;
-  
-  // Ensure the file and page structure exists
-  if (!files[activeFileId]) {
-    files[activeFileId] = {
-      id: activeFileId,
-      name: activeFileName,
-      pages: {},
-      totalTime: 0,
-      lastUpdated: Date.now()
-    };
-  }
-  
-  if (!files[activeFileId].pages[activePage]) {
-    files[activeFileId].pages[activePage] = {
-      id: activePage,
-      name: activePageName,
-      totalTime: 0,
-      fileId: activeFileId, // Ensure page is linked to correct file
-      lastUpdated: Date.now()
-    };
-  }
-  
-  // Clean up any orphaned pages in the current file
-  if (files[activeFileId].pages) {
-    Object.values(files[activeFileId].pages).forEach((page: PageData) => {
-      if (!page.fileId || page.fileId !== activeFileId) {
-        delete files[activeFileId].pages[page.id];
-      }
+  if (fileChanged || pageChanged) {
+    // If tracking was active, stop it for the previous file/page
+    if (isTracking) {
+      await stopTracking();
+    }
+    
+    // Update active file and page info
+    activeFileId = newFileId;
+    activePage = newPageId;
+    activeFileName = newFileName;
+    activePageName = newPageName;
+    
+    // Initialize file structure if it doesn't exist
+    if (!files[activeFileId]) {
+      files[activeFileId] = {
+        id: activeFileId,
+        name: activeFileName,
+        pages: {},
+        totalTime: 0,
+        lastUpdated: Date.now()
+      };
+    }
+    
+    // Initialize or update page structure
+    if (!files[activeFileId].pages[activePage]) {
+      files[activeFileId].pages[activePage] = {
+        id: activePage,
+        name: activePageName,
+        totalTime: 0,
+        fileId: activeFileId,
+        lastUpdated: Date.now()
+      };
+    } else {
+      // Update page name if it changed
+      files[activeFileId].pages[activePage].name = activePageName;
+      files[activeFileId].pages[activePage].fileId = activeFileId;
+    }
+    
+    // Clean up any orphaned pages in the current file
+    if (files[activeFileId].pages) {
+      Object.values(files[activeFileId].pages).forEach((page: PageData) => {
+        if (!page.fileId || page.fileId !== activeFileId) {
+          delete files[activeFileId].pages[page.id];
+        }
+      });
+    }
+    
+    // Notify UI of file change
+    figma.ui.postMessage({
+      type: 'file-changed',
+      fileName: activeFileName,
+      pageName: activePageName,
+      resetTimer: true
     });
-  }
-  
-  figma.ui.postMessage({
-    type: 'file-changed',
-    fileId: activeFileId,
-    fileName: activeFileName,
-    pageId: activePage,
-    pageName: activePageName,
-    resetTimer: true
-  });
-  
-  if (backgroundTracking || isUiVisible) {
-    startTracking();
+    
+    // Send updated summary data
+    figma.ui.postMessage({
+      type: 'summary-data',
+      data: files
+    });
+    
+    // If background tracking is enabled, start tracking the new file/page
+    if (backgroundTracking) {
+      startTracking();
+    }
+    
+    // Save the updated data
+    await saveData();
   }
 }
 
