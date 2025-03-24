@@ -5,7 +5,7 @@
 const FILE_CHECK_INTERVAL = 1000; // How often to check for file changes (in ms)
 const ACTIVITY_CHECK_INTERVAL = 5000; // How often to check for activity (in ms)
 const SAVE_INTERVAL = 60000; // How often to save to local storage (in ms)
-const INACTIVE_THRESHOLD = 300000; // Consider user inactive after 5 minutes
+const INACTIVE_THRESHOLD = 5000; // Consider user inactive after this time (in ms)
 const NOTIFICATION_INTERVAL = 900000; // Show notification every 15 minutes (15 * 60 * 1000 ms)
 
 // Add new constant for background activity check
@@ -43,19 +43,6 @@ interface Files {
   [key: string]: FileData;
 }
 
-interface TimeEntry {
-  startTime: number;
-  lastUpdate: number;
-}
-
-interface TrackingState {
-  isTracking: boolean;
-  currentFile: string | null;
-  currentPage: string | null;
-  lastActivity: number;
-  activeSession: TimeEntry | null;
-}
-
 // Global variables
 let isTracking = false;
 let isUiVisible = false;
@@ -79,15 +66,6 @@ let backgroundCheckInterval: number;
 // Add new variables for activity detection
 let lastAutoStartCheck = Date.now();
 let sustainedActivityStart: number | null = null;
-
-// Global state
-let trackingState: TrackingState = {
-  isTracking: false,
-  currentFile: null,
-  currentPage: null,
-  lastActivity: Date.now(),
-  activeSession: null
-};
 
 // Plugin initialization
 figma.showUI(__html__, { width: 300, height: 400 });
@@ -147,14 +125,21 @@ figma.ui.onmessage = async (message: any) => {
     figma.ui.resize(300, pluginMessage.height);
   }
   else if (pluginMessage.type === 'ui-loaded') {
-    // Load and send current tracking status
+    isUiVisible = true;
+    // Ensure we have fresh data
     await loadSummaryFromClientStorage();
     updateTrackingStatus();
     
-    // Send summary data
+    // Send summary data with current context
     figma.ui.postMessage({
       type: 'summary-data',
-      data: files
+      data: files,
+      currentFileId: activeFileId,
+      recentlyUpdatedPage: isTracking ? {
+        fileId: activeFileId,
+        pageId: activePage?.id,
+        timestamp: Date.now()
+      } : null
     });
   }
   else if (pluginMessage.type === 'stop-tracking') {
@@ -166,10 +151,12 @@ figma.ui.onmessage = async (message: any) => {
     handleActivity();
   }
   else if (pluginMessage.type === 'get-summary') {
-    console.log('Summary data requested from UI');
+    // Reload data before sending
+    await loadSummaryFromClientStorage();
     figma.ui.postMessage({
       type: 'summary-data',
-      data: files
+      data: files,
+      currentFileId: activeFileId
     });
   }
 };
@@ -178,48 +165,56 @@ figma.ui.onmessage = async (message: any) => {
 async function initializePlugin() {
   console.log('Initializing plugin');
   
-  // Load saved data
-  try {
-    const savedFiles = await figma.clientStorage.getAsync(SUMMARY_STORAGE_KEY);
-    if (savedFiles && typeof savedFiles === 'object') {
-      files = savedFiles;
-    }
-    
-    // Load tracking state
-    const savedState = await figma.clientStorage.getAsync('trackingState');
-    if (savedState) {
-      trackingState = {
-        ...savedState,
-        activeSession: null // Always start with no active session
-      };
-    }
-  } catch (error) {
-    console.error('Error loading saved data:', error);
+  // Load summary first
+  await loadSummaryFromClientStorage();
+  
+  // Set up current file and page
+  const currentFileId = figma.currentPage.parent.id;
+  const currentFileName = (figma.currentPage.parent as DocumentNode).name;
+  activeFileId = currentFileId;
+  activePage = figma.currentPage;
+  activeFileName = currentFileName;
+  activePageName = figma.currentPage.name;
+  
+  // Initialize file structure if needed
+  if (!files[activeFileId]) {
+    files[activeFileId] = {
+      id: activeFileId,
+      name: activeFileName,
+      pages: {},
+      totalTime: 0,
+      lastUpdated: Date.now()
+    };
   }
   
-  // Set up initial state
-  trackingState.currentFile = figma.fileKey;
-  trackingState.currentPage = figma.currentPage.id;
+  // Load background tracking preference
+  const bgTracking = await figma.clientStorage.getAsync(BACKGROUND_TRACKING_KEY);
+  if (bgTracking !== null) {
+    backgroundTracking = bgTracking;
+  }
   
-  // Update UI with current state
-  updateUI();
+  // Set up intervals
+  fileCheckInterval = setInterval(checkCurrentFile, FILE_CHECK_INTERVAL);
+  activityCheckInterval = setInterval(checkActivity, ACTIVITY_CHECK_INTERVAL);
+  saveInterval = setInterval(saveData, SAVE_INTERVAL);
+  
+  // Send initial data to UI
+  if (isUiVisible) {
+    updateTrackingStatus();
+    figma.ui.postMessage({
+      type: 'summary-data',
+      data: files,
+      currentFileId: activeFileId
+    });
+  }
 }
 
 // Handle user activity
 function handleActivity() {
-  const now = Date.now();
+  lastActivityTime = Date.now();
   
-  if (!trackingState.isTracking) {
+  if (!isTracking) {
     startTracking();
-    return;
-  }
-  
-  // Update last activity time
-  trackingState.lastActivity = now;
-  
-  // Update session if exists
-  if (trackingState.activeSession) {
-    updateCurrentSession();
   }
 }
 
@@ -232,52 +227,100 @@ function showBackgroundNotification(message: string, timeout: number = 2000) {
 
 // Start time tracking
 function startTracking() {
-  const now = Date.now();
+  if (isTracking) return;
   
-  trackingState.isTracking = true;
-  trackingState.lastActivity = now;
-  trackingState.activeSession = {
-    startTime: now,
-    lastUpdate: now
-  };
+  isTracking = true;
+  console.log('Started tracking');
   
-  // Ensure current file/page exists in data structure
-  ensurePageExists(figma.currentPage);
+  // Ensure we have current file and page info
+  const currentFileId = figma.currentPage.parent.id;
+  const currentFileName = (figma.currentPage.parent as DocumentNode).name;
+  const currentPageId = figma.currentPage.id;
+  const currentPageName = figma.currentPage.name;
   
-  // Update UI
-  updateUI();
+  // Update active file and page info
+  activeFileId = currentFileId;
+  activeFileName = currentFileName;
+  activePage = figma.currentPage;
+  activePageName = currentPageName;
   
-  figma.notify('Started tracking time', { timeout: 2000 });
+  // Create or update file entry
+  if (!files[activeFileId]) {
+    files[activeFileId] = {
+      id: activeFileId,
+      name: activeFileName,
+      pages: {},
+      totalTime: 0,
+      lastUpdated: Date.now()
+    };
+  }
+  
+  // Create or update page entry
+  if (!files[activeFileId].pages[activePage.id]) {
+    files[activeFileId].pages[activePage.id] = {
+      id: activePage.id,
+      name: activePageName,
+      totalTime: 0,
+      fileId: activeFileId,
+      lastUpdated: Date.now()
+    };
+  }
+  
+  trackingStartTime = Date.now();
+  lastNotificationTime = Date.now();
+  lastActivityTime = Date.now();
+  
+  // Show start tracking notification in background
+  showBackgroundNotification(`Started tracking time on "${activePageName}"`, 3000);
+  
+  updateTrackingStatus();
+  saveData();
 }
 
 // Stop time tracking
 async function stopTracking() {
-  if (!trackingState.isTracking) return;
+  if (!isTracking) return;
   
-  // Save final session time
-  updateCurrentSession();
+  // Update final time before stopping
+  updateCurrentSessionTime();
   
-  trackingState.isTracking = false;
-  trackingState.activeSession = null;
+  isTracking = false;
+  const endTime = Date.now();
+  const duration = endTime - trackingStartTime;
   
-  // Save state
+  // Save immediately when stopping
   await saveData();
   
-  // Update UI
-  updateUI();
+  // Show stop tracking notification in background
+  const timeTracked = formatDuration(Math.floor(duration / 1000));
+  showBackgroundNotification(`Stopped tracking "${activePageName}"\nTime tracked: ${timeTracked}`, 3000);
   
-  figma.notify('Stopped tracking time', { timeout: 2000 });
+  // Update UI if visible
+  if (isUiVisible) {
+    figma.ui.postMessage({
+      type: 'summary-data',
+      data: files,
+      currentFileId: activeFileId
+    });
+    
+    figma.ui.postMessage({ 
+      type: 'tracking-status', 
+      isTracking: false 
+    });
+  }
+  
+  console.log('Stopped tracking');
 }
 
 // Update UI with current tracking status
 function updateTrackingStatus() {
   figma.ui.postMessage({
     type: 'tracking-status',
-    isTracking: trackingState.isTracking,
+    isTracking: isTracking,
     backgroundTracking: backgroundTracking,
     fileName: activeFileName,
     pageName: activePageName,
-    startTime: trackingState.isTracking ? trackingStartTime : null,
+    startTime: isTracking ? trackingStartTime : null,
     fileId: activeFileId,
     pageId: activePage.id
   });
@@ -308,7 +351,7 @@ async function handleFileChange(newFileId: string, newPageId: string, newFileNam
   
   if (fileChanged || pageChanged) {
     // If tracking was active, stop it for the previous file/page
-    if (trackingState.isTracking) {
+    if (isTracking) {
       await stopTracking();
       // Show page change notification in background
       showBackgroundNotification(`Switched from "${activePageName}" to "${newPageName}"`, 3000);
@@ -384,7 +427,7 @@ function checkActivity() {
   const now = Date.now();
   
   // Only stop tracking if user is truly inactive and UI is visible
-  if (trackingState.isTracking && isUiVisible && (now - trackingState.lastActivity > INACTIVE_THRESHOLD)) {
+  if (isTracking && isUiVisible && (now - lastActivityTime > INACTIVE_THRESHOLD)) {
     const hadRecentChanges = checkForRecentChanges();
     
     if (!hadRecentChanges) {
@@ -417,22 +460,47 @@ function checkForRecentChanges(): boolean {
   }
 
   if (hasActivity) {
-    trackingState.lastActivity = now;
+    lastActivityTime = now;
     return true;
   }
 
   // Check if we're still within activity timeout
-  return (now - trackingState.lastActivity) < RECENT_UPDATE_THRESHOLD;
+  return (now - lastActivityTime) < RECENT_UPDATE_THRESHOLD;
 }
 
 // Save data to client storage
 async function saveData() {
   try {
-    await figma.clientStorage.setAsync(SUMMARY_STORAGE_KEY, files);
-    await figma.clientStorage.setAsync('trackingState', {
-      ...trackingState,
-      activeSession: null // Don't save session details
+    // Clean up data before saving
+    Object.keys(files).forEach(fileId => {
+      const file = files[fileId];
+      if (!file.pages) file.pages = {};
+      
+      // Update file total time
+      file.totalTime = Object.values(file.pages).reduce((total, page: PageData) => {
+        return total + (page?.totalTime || 0);
+      }, 0);
+      
+      // Remove invalid pages
+      Object.keys(file.pages).forEach(pageId => {
+        const page = file.pages[pageId];
+        if (!page || !page.id || !page.fileId || !page.name) {
+          delete file.pages[pageId];
+        }
+      });
     });
+    
+    await saveSummaryToClientStorage(files);
+    lastSaveTime = Date.now();
+    
+    // Send update to UI if visible
+    if (isUiVisible) {
+      figma.ui.postMessage({
+        type: 'summary-data',
+        data: files,
+        currentFileId: activeFileId
+      });
+    }
   } catch (error) {
     console.error('Error saving data:', error);
     figma.notify('Error saving tracking data', { error: true });
@@ -440,53 +508,62 @@ async function saveData() {
 }
 
 // Client storage functions
+async function saveSummaryToClientStorage(summaryData: any) {
+  try {
+    await figma.clientStorage.setAsync(SUMMARY_STORAGE_KEY, summaryData);
+    await figma.clientStorage.setAsync(LAST_UPDATE_KEY, Date.now());
+    console.log('Summary saved to client storage');
+  } catch (error) {
+    console.error('Error saving to client storage:', error);
+  }
+}
+
 async function loadSummaryFromClientStorage() {
   try {
     const summaryData = await figma.clientStorage.getAsync(SUMMARY_STORAGE_KEY);
     const lastUpdate = await figma.clientStorage.getAsync(LAST_UPDATE_KEY);
     console.log('Summary loaded from client storage, last updated:', new Date(lastUpdate));
     
-    // Validate and clean the loaded data
-    if (summaryData && typeof summaryData === 'object') {
-      // Clean up any invalid entries
-      Object.keys(summaryData).forEach(fileId => {
-        const file = summaryData[fileId];
-        if (!file || !file.pages || typeof file.pages !== 'object') {
-          delete summaryData[fileId];
-          return;
-        }
+    if (summaryData) {
+      files = summaryData;
+      
+      // Clean up and validate the data
+      Object.keys(files).forEach(fileId => {
+        const file = files[fileId];
+        if (!file.pages) file.pages = {};
         
-        // Clean up invalid pages
+        // Recalculate file total time
+        file.totalTime = Object.values(file.pages).reduce((total, page: PageData) => {
+          return total + (page?.totalTime || 0);
+        }, 0);
+        
+        // Remove invalid pages
         Object.keys(file.pages).forEach(pageId => {
           const page = file.pages[pageId];
-          if (!page || !page.id || !page.name || typeof page.totalTime !== 'number') {
+          if (!page || !page.id || !page.fileId || !page.name) {
             delete file.pages[pageId];
           }
         });
         
-        // Recalculate file total time
-        file.totalTime = Object.values(file.pages).reduce((total, p: any) => total + (p.totalTime || 0), 0);
+        // Remove empty files
+        if (Object.keys(file.pages).length === 0) {
+          delete files[fileId];
+        }
       });
-      
-      files = summaryData;
       
       // Send immediate update to UI
       if (isUiVisible) {
         figma.ui.postMessage({
           type: 'summary-data',
-          data: files
+          data: files,
+          currentFileId: activeFileId
         });
       }
-    } else {
-      console.log('No valid summary data found, initializing empty state');
-      files = {};
     }
-    
     return files;
   } catch (error) {
     console.error('Error loading from client storage:', error);
-    files = {};
-    return files;
+    return {};
   }
 }
 
@@ -519,10 +596,10 @@ function checkBackgroundActivity() {
     const hasRecentChanges = checkForRecentChanges();
     
     if (hasSelection || viewportChanged || hasRecentChanges) {
-      trackingState.lastActivity = now;
+      lastActivityTime = now;
       
       // Handle auto-start tracking with immediate feedback
-      if (!trackingState.isTracking && backgroundTracking) {
+      if (!isTracking && backgroundTracking) {
         if (!sustainedActivityStart) {
           sustainedActivityStart = now;
         } else if (now - sustainedActivityStart >= AUTO_START_THRESHOLD) {
@@ -531,7 +608,7 @@ function checkBackgroundActivity() {
           sustainedActivityStart = 0;
           
           // Force an immediate time update
-          updateCurrentSession();
+          updateCurrentSessionTime();
           saveData();
         }
       }
@@ -540,8 +617,8 @@ function checkBackgroundActivity() {
     }
     
     // Update and save time more frequently in background
-    if (trackingState.isTracking) {
-      updateCurrentSession();
+    if (isTracking) {
+      updateCurrentSessionTime();
       
       // Show periodic notifications with more details
       if (!isUiVisible && (now - lastNotificationTime > NOTIFICATION_INTERVAL)) {
@@ -561,71 +638,42 @@ function checkBackgroundActivity() {
 }
 
 // Add function to update current session time
-function updateCurrentSession() {
-  if (!trackingState.isTracking || !activeFileId || !activePage) return;
+function updateCurrentSessionTime() {
+  if (!isTracking || !activeFileId || !activePage) return;
   
   const now = Date.now();
-  const elapsed = now - trackingState.lastActivity;
+  const elapsedTime = now - lastActivityTime;
+  lastActivityTime = now;
   
-  // Only update if reasonable time has passed
-  if (elapsed > 0 && elapsed < INACTIVE_THRESHOLD) {
-    // Update page time
-    const page = files[activeFileId]?.pages[activePage.id];
-    if (page) {
-      page.totalTime += elapsed;
-      page.lastUpdated = now;
-      
-      // Update file total time
-      files[activeFileId].totalTime = Object.values(files[activeFileId].pages).reduce((total, p) => total + (p.totalTime || 0), 0);
+  if (files[activeFileId] && files[activeFileId].pages[activePage.id]) {
+    const file = files[activeFileId];
+    const page = file.pages[activePage.id];
+    
+    // Calculate the increment since last update
+    const previousTotal = page.totalTime || 0;
+    const timeIncrement = elapsedTime;
+    page.totalTime = previousTotal + timeIncrement;
+    page.lastUpdated = now;
+    
+    // Update file total time
+    file.totalTime = Object.values(file.pages).reduce((total, p) => total + (p.totalTime || 0), 0);
+    file.lastUpdated = now;
+    
+    // Save data periodically
+    if (now - lastSaveTime >= SAVE_INTERVAL) {
+      saveData();
     }
+    
+    // Send update to UI with recently updated page info
+    figma.ui.postMessage({
+      type: 'summary-data',
+      data: files,
+      currentFileId: activeFileId,
+      recentlyUpdatedPage: {
+        fileId: activeFileId,
+        pageId: activePage.id,
+        timestamp: now
+      }
+    });
   }
-  
-  // Update session
-  trackingState.lastActivity = now;
-  
-  // Save periodically
-  if (now - lastSaveTime >= SAVE_INTERVAL) {
-    saveData();
-  }
-  
-  // Update UI
-  updateUI();
-}
-
-function ensurePageExists(page: PageNode) {
-  const fileId = figma.fileKey;
-  const fileName = figma.root.name;
-  
-  // Ensure file exists
-  if (!files[fileId]) {
-    files[fileId] = {
-      id: fileId,
-      name: fileName,
-      pages: {},
-      totalTime: 0,
-      lastUpdated: Date.now()
-    };
-  }
-  
-  // Ensure page exists
-  if (!files[fileId].pages[page.id]) {
-    files[fileId].pages[page.id] = {
-      id: page.id,
-      name: page.name,
-      totalTime: 0,
-      fileId: fileId,
-      lastUpdated: Date.now()
-    };
-  }
-}
-
-function updateUI() {
-  figma.ui.postMessage({
-    type: 'update',
-    tracking: trackingState.isTracking,
-    files: files,
-    currentFile: trackingState.currentFile,
-    currentPage: trackingState.currentPage,
-    activeSession: trackingState.activeSession
-  });
 }
