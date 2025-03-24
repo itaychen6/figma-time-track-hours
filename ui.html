@@ -360,7 +360,13 @@
         return;
       }
       
-      Object.values(summaryData).forEach(file => {
+      // Sort files by total time (descending)
+      const sortedFiles = Object.values(summaryData)
+        .sort((a, b) => (b.totalTime || 0) - (a.totalTime || 0));
+      
+      sortedFiles.forEach(file => {
+        if (!file || !file.totalTime) return; // Skip files with no tracking time
+        
         const fileElement = document.createElement('div');
         fileElement.className = 'file-summary';
         
@@ -372,8 +378,34 @@
         timeElement.className = 'file-time';
         timeElement.textContent = formatDuration(Math.floor(file.totalTime / 1000));
         
-        fileElement.appendChild(nameElement);
-        fileElement.appendChild(timeElement);
+        // Add page details if they exist
+        if (file.pages && Object.keys(file.pages).length > 0) {
+          const pagesElement = document.createElement('div');
+          pagesElement.className = 'page-details';
+          pagesElement.style.fontSize = '12px';
+          pagesElement.style.color = '#666';
+          pagesElement.style.marginTop = '4px';
+          pagesElement.style.paddingLeft = '8px';
+          
+          Object.values(file.pages)
+            .sort((a, b) => (b.totalTime || 0) - (a.totalTime || 0))
+            .forEach(page => {
+              if (!page || !page.totalTime) return;
+              const pageTime = document.createElement('div');
+              pageTime.textContent = `${truncateString(page.name, 25)}: ${formatDuration(Math.floor(page.totalTime / 1000))}`;
+              pagesElement.appendChild(pageTime);
+            });
+          
+          if (pagesElement.children.length > 0) {
+            fileElement.appendChild(nameElement);
+            fileElement.appendChild(timeElement);
+            fileElement.appendChild(pagesElement);
+          }
+        } else {
+          fileElement.appendChild(nameElement);
+          fileElement.appendChild(timeElement);
+        }
+        
         container.appendChild(fileElement);
       });
     }

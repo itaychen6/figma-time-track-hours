@@ -65,14 +65,14 @@ figma.ui.onmessage = async (message: any) => {
   console.log('Message received from UI:', pluginMessage.type);
 
   if (pluginMessage.type === 'ui-loaded') {
-    // Send current tracking status
+    // Load and send current tracking status
+    await loadSummaryFromClientStorage();
     updateTrackingStatus();
     
     // Send summary data
-    const summaryData = await loadSummaryFromClientStorage();
     figma.ui.postMessage({
       type: 'summary-data',
-      data: summaryData
+      data: files
     });
   }
   else if (pluginMessage.type === 'stop-tracking') {
@@ -85,10 +85,9 @@ figma.ui.onmessage = async (message: any) => {
   }
   else if (pluginMessage.type === 'get-summary') {
     console.log('Summary data requested from UI');
-    const summaryData = await loadSummaryFromClientStorage();
     figma.ui.postMessage({
       type: 'summary-data',
-      data: summaryData
+      data: files
     });
   }
 };
@@ -98,11 +97,7 @@ async function initializePlugin() {
   console.log('Initializing plugin');
   
   // Load summary from client storage
-  const storedSummary = await loadSummaryFromClientStorage();
-  if (storedSummary && Object.keys(storedSummary).length > 0) {
-    files = storedSummary;
-    console.log('Loaded summary from client storage');
-  }
+  await loadSummaryFromClientStorage();
   
   // Load background tracking preference
   const bgTracking = await figma.clientStorage.getAsync(BACKGROUND_TRACKING_KEY);
@@ -178,6 +173,12 @@ async function stopTracking() {
     
     // Save to client storage
     await saveSummaryToClientStorage(files);
+    
+    // Send updated summary to UI
+    figma.ui.postMessage({
+      type: 'summary-data',
+      data: files
+    });
   }
   
   // Update UI
@@ -282,6 +283,9 @@ async function loadSummaryFromClientStorage() {
     const summaryData = await figma.clientStorage.getAsync(SUMMARY_STORAGE_KEY);
     const lastUpdate = await figma.clientStorage.getAsync(LAST_UPDATE_KEY);
     console.log('Summary loaded from client storage, last updated:', new Date(lastUpdate));
+    if (summaryData) {
+      files = summaryData;
+    }
     return summaryData || {};
   } catch (error) {
     console.error('Error loading from client storage:', error);
