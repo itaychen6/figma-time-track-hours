@@ -399,13 +399,22 @@
           pagesContainer.style.borderLeft = '2px solid #e0e0e0';
           pagesContainer.style.paddingLeft = '12px';
           
-          // Filter and sort pages that belong to this file
-          const sortedPages = Object.values(file.pages)
-            .filter(page => page && page.totalTime > 0 && page.fileId === file.id)
+          // Get only pages that belong to this specific file
+          const filePages = Object.values(file.pages)
+            .filter(page => {
+              // Ensure page exists, has tracking time, and belongs to this file
+              return page && 
+                     page.totalTime > 0 && 
+                     page.fileId === file.id &&
+                     page.name && // Ensure page has a name
+                     typeof page.totalTime === 'number'; // Ensure totalTime is a number
+            })
             .sort((a, b) => (b.totalTime || 0) - (a.totalTime || 0));
           
-          if (sortedPages.length > 0) {
-            sortedPages.forEach(page => {
+          if (filePages.length > 0) {
+            let totalPagesTime = 0;
+            
+            filePages.forEach(page => {
               const pageElement = document.createElement('div');
               pageElement.className = 'page-summary';
               pageElement.style.display = 'flex';
@@ -426,9 +435,14 @@
               pageElement.appendChild(pageName);
               pageElement.appendChild(pageTime);
               pagesContainer.appendChild(pageElement);
+              
+              totalPagesTime += page.totalTime;
             });
             
-            fileElement.appendChild(pagesContainer);
+            // Only append pages container if there are valid pages
+            if (totalPagesTime > 0) {
+              fileElement.appendChild(pagesContainer);
+            }
           }
         }
         
