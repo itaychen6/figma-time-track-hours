@@ -6,6 +6,8 @@ const FILE_CHECK_INTERVAL = 1000; // How often to check for file changes (in ms)
 const ACTIVITY_CHECK_INTERVAL = 5000; // How often to check for activity (in ms)
 const SAVE_INTERVAL = 60000; // How often to save to local storage (in ms)
 const INACTIVE_THRESHOLD = 5000; // Consider user inactive after this time (in ms)
+const NOTIFICATION_INTERVAL = 1800000; // Show notification every 30 minutes (30 * 60 * 1000)
+const BACKGROUND_SAVE_INTERVAL = 60000; // Save data every minute in background
 
 // Storage keys
 const SUMMARY_STORAGE_KEY = 'timeTrackingSummary';
@@ -54,10 +56,28 @@ figma.showUI(__html__, { width: 300, height: 400 });
 
 // Register the plugin close handler
 figma.on('close', async () => {
-  console.log('Plugin closing, saving final data...');
+  console.log('Plugin UI closing, continuing in background...');
+  isUiVisible = false;
+  
   if (isTracking) {
-    await stopTracking();
+    // Show notification that tracking continues in background
+    figma.notify('Time tracking continues in background. Open plugin to stop.');
+    
+    // Set up background notification interval
+    setInterval(() => {
+      if (isTracking) {
+        const elapsed = Math.floor((Date.now() - trackingStartTime) / 1000);
+        const timeString = formatDuration(elapsed);
+        figma.notify(`Still tracking time: ${timeString}`);
+      }
+    }, NOTIFICATION_INTERVAL);
   }
+});
+
+// Add UI show handler
+figma.on('run', () => {
+  isUiVisible = true;
+  updateTrackingStatus();
 });
 
 // First, load all pages before registering event handlers
@@ -155,7 +175,7 @@ function startTracking() {
   isTracking = true;
   console.log('Started tracking');
   
-  // Create or update file entry with proper page structure
+  // Create or update file entry
   if (!files[activeFileId]) {
     files[activeFileId] = {
       id: activeFileId,
@@ -166,18 +186,24 @@ function startTracking() {
     };
   }
   
-  // Create or update page entry with proper nesting
+  // Create or update page entry
   if (!files[activeFileId].pages[activePage]) {
     files[activeFileId].pages[activePage] = {
       id: activePage,
       name: activePageName,
       totalTime: 0,
-      fileId: activeFileId, // Link page to its parent file
+      fileId: activeFileId,
       lastUpdated: Date.now()
     };
   }
   
   trackingStartTime = Date.now();
+  
+  // Show notification when starting in background
+  if (!isUiVisible) {
+    figma.notify('Started tracking time in background');
+  }
+  
   updateTrackingStatus();
   saveData();
 }
@@ -190,7 +216,7 @@ async function stopTracking() {
   const endTime = Date.now();
   const duration = endTime - trackingStartTime;
   
-  // Update tracking data with proper file and page structure
+  // Update tracking data
   if (activeFileId && files[activeFileId]) {
     const file = files[activeFileId];
     file.totalTime = (file.totalTime || 0) + duration;
@@ -200,32 +226,36 @@ async function stopTracking() {
       const page = file.pages[activePage];
       page.totalTime = (page.totalTime || 0) + duration;
       page.lastUpdated = Date.now();
-      page.fileId = activeFileId; // Ensure page is linked to correct file
+      page.fileId = activeFileId;
     }
     
-    // Clean up any orphaned pages
+    // Clean up orphaned pages
     Object.values(file.pages).forEach((page: PageData) => {
       if (!page.fileId || page.fileId !== activeFileId) {
         delete file.pages[page.id];
       }
     });
     
-    // Save to client storage
     await saveSummaryToClientStorage(files);
     
-    // Send updated summary to UI
-    figma.ui.postMessage({
-      type: 'summary-data',
-      data: files,
-      currentFileId: activeFileId
-    });
+    // Only send UI updates if UI is visible
+    if (isUiVisible) {
+      figma.ui.postMessage({
+        type: 'summary-data',
+        data: files,
+        currentFileId: activeFileId
+      });
+      
+      figma.ui.postMessage({ 
+        type: 'tracking-status', 
+        isTracking: false 
+      });
+    } else {
+      // Show notification in background
+      const timeString = formatDuration(Math.floor(duration / 1000));
+      figma.notify(`Stopped tracking. Session duration: ${timeString}`);
+    }
   }
-  
-  // Update UI
-  figma.ui.postMessage({ 
-    type: 'tracking-status', 
-    isTracking: false 
-  });
   
   console.log('Stopped tracking');
 }
@@ -344,6 +374,9 @@ function checkActivity() {
   
   if (isTracking && (now - lastActivityTime > INACTIVE_THRESHOLD)) {
     console.log('User inactive, stopping tracking');
+    if (!isUiVisible) {
+      figma.notify('Stopping tracking due to inactivity');
+    }
     stopTracking();
   }
 }
@@ -382,4 +415,11 @@ async function loadSummaryFromClientStorage() {
     console.error('Error loading from client storage:', error);
     return {};
   }
+}
+
+// Add duration formatting function
+function formatDuration(seconds: number): string {
+  const hours = Math.floor(seconds / 3600);
+  const minutes = Math.floor((seconds % 3600) / 60);
+  return `${hours}h ${minutes}m`;
 }
