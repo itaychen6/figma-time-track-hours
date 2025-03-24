@@ -359,89 +359,89 @@
         container.innerHTML = '<div class="file-summary">No tracking data available</div>';
         return;
       }
-      
-      // Sort files by total time (descending)
-      const sortedFiles = Object.values(summaryData)
-        .filter(file => file && file.totalTime > 0)
-        .sort((a, b) => (b.totalTime || 0) - (a.totalTime || 0));
-      
-      sortedFiles.forEach(file => {
-        // Skip files with no valid pages or time
-        if (!file.pages || !file.id || !file.name) return;
+
+      // Calculate today's total time (6 AM to 6 AM)
+      const now = new Date();
+      const todayStart = new Date(now);
+      todayStart.setHours(6, 0, 0, 0);
+      if (now.getHours() < 6) {
+        todayStart.setDate(todayStart.getDate() - 1);
+      }
+
+      let todayTotal = 0;
+      const allPages = [];
+
+      // Collect all pages and calculate today's total
+      Object.values(summaryData).forEach(file => {
+        if (!file.pages) return;
         
-        const fileElement = document.createElement('div');
-        fileElement.className = 'file-summary';
-        
-        // File header
-        const fileHeader = document.createElement('div');
-        fileHeader.className = 'file-header';
-        fileHeader.style.display = 'flex';
-        fileHeader.style.justifyContent = 'space-between';
-        fileHeader.style.alignItems = 'center';
-        fileHeader.style.marginBottom = '8px';
-        
-        const nameElement = document.createElement('div');
-        nameElement.className = 'file-name';
-        nameElement.style.flex = '1';
-        nameElement.textContent = truncateString(file.name, 30);
-        
-        const timeElement = document.createElement('div');
-        timeElement.className = 'file-time';
-        timeElement.style.marginLeft = '8px';
-        timeElement.textContent = formatDuration(Math.floor(file.totalTime / 1000));
-        
-        fileHeader.appendChild(nameElement);
-        fileHeader.appendChild(timeElement);
-        fileElement.appendChild(fileHeader);
-        
-        // Filter and sort pages that belong to this file
-        const validPages = Object.values(file.pages)
-          .filter(page => {
-            return page && 
-                   page.id &&
-                   page.name &&
-                   page.fileId === file.id && // Ensure page belongs to this file
-                   typeof page.totalTime === 'number' &&
-                   page.totalTime > 0;
-          })
-          .sort((a, b) => b.totalTime - a.totalTime);
-        
-        if (validPages.length > 0) {
-          const pagesContainer = document.createElement('div');
-          pagesContainer.className = 'pages-container';
-          pagesContainer.style.marginLeft = '16px';
-          pagesContainer.style.borderLeft = '2px solid #e0e0e0';
-          pagesContainer.style.paddingLeft = '12px';
-          
-          validPages.forEach(page => {
-            const pageElement = document.createElement('div');
-            pageElement.className = 'page-summary';
-            pageElement.style.display = 'flex';
-            pageElement.style.justifyContent = 'space-between';
-            pageElement.style.alignItems = 'center';
-            pageElement.style.marginBottom = '4px';
-            pageElement.style.fontSize = '13px';
-            pageElement.style.color = '#666';
-            
-            const pageName = document.createElement('div');
-            pageName.style.flex = '1';
-            pageName.textContent = truncateString(page.name, 25);
-            
-            const pageTime = document.createElement('div');
-            pageTime.style.marginLeft = '8px';
-            pageTime.textContent = formatDuration(Math.floor(page.totalTime / 1000));
-            
-            pageElement.appendChild(pageName);
-            pageElement.appendChild(pageTime);
-            pagesContainer.appendChild(pageElement);
-          });
-          
-          fileElement.appendChild(pagesContainer);
-        }
-        
-        container.appendChild(fileElement);
+        Object.values(file.pages).forEach(page => {
+          if (page && page.lastUpdated && page.totalTime > 0) {
+            if (page.lastUpdated >= todayStart.getTime()) {
+              todayTotal += page.totalTime;
+            }
+            allPages.push(page);
+          }
+        });
       });
-      
+
+      // Create today's total header
+      const totalHeader = document.createElement('div');
+      totalHeader.className = 'today-total';
+      totalHeader.style.fontSize = '16px';
+      totalHeader.style.fontWeight = '500';
+      totalHeader.style.marginBottom = '16px';
+      totalHeader.style.padding = '12px';
+      totalHeader.style.backgroundColor = '#f0f7ff';
+      totalHeader.style.borderRadius = '6px';
+      totalHeader.style.color = '#18A0FB';
+      totalHeader.textContent = `Today Total: ${formatDuration(Math.floor(todayTotal / 1000))}`;
+      container.appendChild(totalHeader);
+
+      // Sort all pages by total time
+      const sortedPages = allPages
+        .sort((a, b) => b.totalTime - a.totalTime);
+
+      // Create pages list
+      const pagesContainer = document.createElement('div');
+      pagesContainer.className = 'pages-list';
+      pagesContainer.style.display = 'flex';
+      pagesContainer.style.flexDirection = 'column';
+      pagesContainer.style.gap = '8px';
+
+      sortedPages.forEach(page => {
+        const pageElement = document.createElement('div');
+        pageElement.className = 'page-summary';
+        pageElement.style.display = 'flex';
+        pageElement.style.justifyContent = 'space-between';
+        pageElement.style.alignItems = 'center';
+        pageElement.style.padding = '8px 12px';
+        pageElement.style.backgroundColor = '#f5f5f5';
+        pageElement.style.borderRadius = '4px';
+        pageElement.style.fontSize = '14px';
+
+        const pageName = document.createElement('div');
+        pageName.style.flex = '1';
+        pageName.style.fontWeight = '500';
+        pageName.textContent = truncateString(page.name, 25);
+
+        const pageTime = document.createElement('div');
+        pageTime.style.marginLeft = '12px';
+        pageTime.style.color = '#666';
+        pageTime.textContent = formatDuration(Math.floor(page.totalTime / 1000));
+
+        // Add highlight for today's pages
+        if (page.lastUpdated >= todayStart.getTime()) {
+          pageElement.style.backgroundColor = '#f8f8f8';
+          pageElement.style.borderLeft = '3px solid #18A0FB';
+        }
+
+        pageElement.appendChild(pageName);
+        pageElement.appendChild(pageTime);
+        pagesContainer.appendChild(pageElement);
+      });
+
+      container.appendChild(pagesContainer);
       container.style.overflowY = 'auto';
     }
 
