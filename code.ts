@@ -11,6 +11,9 @@ const NOTIFICATION_INTERVAL = 900000; // Show notification every 15 minutes (15 
 // Add new constant for background activity check
 const BACKGROUND_CHECK_INTERVAL = 3000; // Check background activity every 3 seconds
 
+// Add new constant for auto-start detection
+const AUTO_START_THRESHOLD = 2000; // Time in ms to detect sustained activity before auto-starting
+
 // Storage keys
 const SUMMARY_STORAGE_KEY = 'timeTrackingSummary';
 const LAST_UPDATE_KEY = 'lastSummaryUpdate';
@@ -56,6 +59,10 @@ let lastNotificationTime = Date.now();
 
 // Add background interval
 let backgroundCheckInterval: number;
+
+// Add new variables for activity detection
+let lastAutoStartCheck = Date.now();
+let sustainedActivityStart = 0;
 
 // Plugin initialization
 figma.showUI(__html__, { width: 300, height: 400 });
@@ -236,43 +243,32 @@ function startTracking() {
 async function stopTracking() {
   if (!isTracking) return;
   
+  // Update final time before stopping
+  updateCurrentSessionTime();
+  
   isTracking = false;
   const endTime = Date.now();
   const duration = endTime - trackingStartTime;
   
-  // Update tracking data
-  if (activeFileId && files[activeFileId]) {
-    const file = files[activeFileId];
-    file.totalTime = (file.totalTime || 0) + duration;
-    file.lastUpdated = Date.now();
+  // Save immediately when stopping
+  await saveSummaryToClientStorage(files);
+  
+  // Show stop tracking notification in background
+  const timeTracked = formatDuration(Math.floor(duration / 1000));
+  showBackgroundNotification(`Stopped tracking "${activePageName}"\nTime tracked: ${timeTracked}`, 3000);
+  
+  // Update UI if visible
+  if (isUiVisible) {
+    figma.ui.postMessage({
+      type: 'summary-data',
+      data: files,
+      currentFileId: activeFileId
+    });
     
-    if (activePage && file.pages && file.pages[activePage]) {
-      const page = file.pages[activePage];
-      page.totalTime = (page.totalTime || 0) + duration;
-      page.lastUpdated = Date.now();
-      page.fileId = activeFileId;
-    }
-    
-    // Save immediately when stopping
-    await saveSummaryToClientStorage(files);
-    
-    // Show stop tracking notification in background
-    const timeTracked = formatDuration(Math.floor(duration / 1000));
-    showBackgroundNotification(`Stopped tracking "${activePageName}"\nTime tracked: ${timeTracked}`, 3000);
-    
-    // Update UI if visible
-    if (isUiVisible) {
-      figma.ui.postMessage({
-        type: 'summary-data',
-        data: files,
-        currentFileId: activeFileId
-      });
-      
-      figma.ui.postMessage({ 
-        type: 'tracking-status', 
-        isTracking: false 
-      });
-    }
+    figma.ui.postMessage({ 
+      type: 'tracking-status', 
+      isTracking: false 
+    });
   }
   
   console.log('Stopped tracking');
@@ -406,15 +402,16 @@ function checkActivity() {
 // Add function to check for recent document changes
 function checkForRecentChanges(): boolean {
   try {
-    // Check if current page or selection has changed
     const currentPageId = figma.currentPage.id;
     const currentFileName = (figma.currentPage.parent as DocumentNode).name;
+    const hasSelection = figma.currentPage.selection.length > 0;
+    const viewportChanged = figma.viewport.zoom !== figma.viewport.zoom;
     
-    if (currentPageId !== activePage || currentFileName !== activeFileName) {
-      return true;
-    }
-    
-    return false;
+    // Check for any kind of activity
+    return currentPageId !== activePage || 
+           currentFileName !== activeFileName ||
+           hasSelection ||
+           viewportChanged;
   } catch (error) {
     console.error('Error checking for changes:', error);
     return false;
@@ -480,26 +477,76 @@ function checkBackgroundActivity() {
       handleFileChange(currentFileId, currentPageId, currentFileName, currentPageName);
     }
     
-    // Check for user activity in background
-    if (figma.currentPage.selection.length > 0 || figma.viewport.zoom !== figma.viewport.zoom) {
+    // Enhanced activity detection
+    const hasSelection = figma.currentPage.selection.length > 0;
+    const viewportChanged = figma.viewport.zoom !== figma.viewport.zoom;
+    const hasRecentChanges = checkForRecentChanges();
+    
+    if (hasSelection || viewportChanged || hasRecentChanges) {
       lastActivityTime = now;
       
-      // Start tracking if not already tracking
+      // Handle auto-start tracking
       if (!isTracking && backgroundTracking) {
-        startTracking();
+        if (!sustainedActivityStart) {
+          sustainedActivityStart = now;
+        } else if (now - sustainedActivityStart >= AUTO_START_THRESHOLD) {
+          showBackgroundNotification('Activity detected, starting time tracking...', 3000);
+          startTracking();
+          sustainedActivityStart = 0;
+        }
       }
+    } else {
+      sustainedActivityStart = 0;
     }
     
-    // Show periodic notifications
-    if (isTracking && !isUiVisible && (now - lastNotificationTime > NOTIFICATION_INTERVAL)) {
-      const timeTracked = formatDuration(Math.floor((now - trackingStartTime) / 1000));
-      figma.notify(`Still tracking time: ${timeTracked} on "${activePageName}"`);
-      lastNotificationTime = now;
+    // Update and save time more frequently in background
+    if (isTracking) {
+      updateCurrentSessionTime();
       
-      // Save data more frequently in background
-      saveData();
+      // Show periodic notifications
+      if (!isUiVisible && (now - lastNotificationTime > NOTIFICATION_INTERVAL)) {
+        const timeTracked = formatDuration(Math.floor((now - trackingStartTime) / 1000));
+        showBackgroundNotification(`Still tracking time: ${timeTracked} on "${activePageName}"`, 3000);
+        lastNotificationTime = now;
+      }
     }
   } catch (error) {
     console.error('Error in background activity check:', error);
+  }
+}
+
+// Add function to update current session time
+function updateCurrentSessionTime() {
+  if (!isTracking || !activeFileId || !activePage) return;
+  
+  const now = Date.now();
+  const currentDuration = now - trackingStartTime;
+  
+  if (files[activeFileId] && files[activeFileId].pages[activePage]) {
+    const file = files[activeFileId];
+    const page = file.pages[activePage];
+    
+    // Calculate the increment since last update
+    const previousTotal = page.totalTime || 0;
+    page.totalTime = previousTotal + (now - Math.max(trackingStartTime, page.lastUpdated));
+    page.lastUpdated = now;
+    
+    // Update file total time
+    file.totalTime = Object.values(file.pages).reduce((total, p) => total + (p.totalTime || 0), 0);
+    file.lastUpdated = now;
+    
+    // Save data periodically
+    if (now - lastSaveTime >= SAVE_INTERVAL) {
+      saveData();
+    }
+    
+    // Update UI if visible
+    if (isUiVisible) {
+      figma.ui.postMessage({
+        type: 'summary-data',
+        data: files,
+        currentFileId: activeFileId
+      });
+    }
   }
 }
