@@ -1896,6 +1896,26 @@
         // Handle tracking updates by updating our local data
         handleTrackingUpdate(msg);
       }
+      // Add handling for summary data
+      else if (msg.type === 'summary-data') {
+        console.log('Received summary data from plugin');
+        
+        // Store the data in memory
+        summaryData = msg.data;
+        
+        // Try to save to localStorage as backup, but handle errors gracefully
+        if (isLocalStorageAvailable()) {
+          try {
+            localStorage.setItem('figmaTimeTrackSummary_backup', JSON.stringify(summaryData));
+            localStorage.setItem('figmaTimeTrackSummaryTimestamp', Date.now().toString());
+          } catch (e) {
+            console.warn('Could not save to localStorage:', e);
+          }
+        }
+        
+        // Update the summary display
+        updateSummaryDisplay(msg.data);
+      }
     };
 
     // Load summary data from Firebase
@@ -2677,31 +2697,7 @@
       
       // Handle specific tabs
       if (tabId === 'summary-tab') {
-        console.log('Summary tab clicked, loading data...');
-        
-        // Check if we're already connected to Firebase
-        if (firebaseInitialized && userId) {
-          document.getElementById('summary-container').innerHTML = 
-            '<div class="firebase-loading"><div class="spinner"></div>' + 
-            '<p>Loading fresh data from Firebase...</p></div>';
-            
-          // Set a small delay to show loading first
-          setTimeout(() => {
-            // Load fresh summary data from Firebase if possible
-            loadSummaryFromFirebase();
-          }, 200);
-        } 
-        else if (activelyInitializingFirebase) {
-          // Firebase is in the process of initializing, show waiting message
-          document.getElementById('summary-container').innerHTML = 
-            '<div class="firebase-loading"><div class="spinner"></div>' + 
-            '<p>Connecting to Firebase...</p></div>';
-        }
-        else {
-          // Firebase not available, try using backup data with clear indication
-          console.warn('Firebase not available for summary, using backup data');
-          useBackupData('Firebase unavailable');
-        }
+        handleSummaryTabActivation();
       }
       else if (tabId === 'tracking-tab') {
         // Anything special for tracking tab
@@ -2721,43 +2717,25 @@
           return;
         }
         
-        // Then try localStorage
-        const savedData = loadSummaryFromLocalStorage();
-        if (savedData) {
-          console.log('Using localStorage backup data');
-          summaryData = savedData; // Update in-memory copy
-          updateSummaryDisplay(savedData, 'Local Storage');
-          return;
+        // Then try localStorage if available
+        if (isLocalStorageAvailable()) {
+          const savedData = loadSummaryFromLocalStorage();
+          if (savedData) {
+            console.log('Using localStorage backup data');
+            summaryData = savedData; // Update in-memory copy
+            updateSummaryDisplay(savedData, 'Local Storage');
+            return;
+          }
         }
         
-        // If still no data, show empty state with clear message
-        console.log('No backup data available');
-        document.getElementById('summary-container').innerHTML = `
-          <div class="empty-state">
-            <div class="empty-icon">📊</div>
-            <h3>No Summary Data</h3>
-            <p>No time tracking data found in Firebase or local storage.</p>
-            <button id="refresh-summary-btn" class="button">Refresh</button>
-          </div>
-        `;
+        // If still no data, request from plugin
+        console.log('No backup data available, requesting from plugin');
+        parent.postMessage({ pluginMessage: { type: 'get-summary', immediate: true } }, '*');
         
-        // Add refresh button handler
-        document.getElementById('refresh-summary-btn').addEventListener('click', function() {
-          refreshSummary();
-        });
       } catch (e) {
         console.error('Error using backup data:', e);
-        document.getElementById('summary-container').innerHTML = `
-          <div class="error-message">
-            <p>Error loading summary data: ${e.message}</p>
-            <button id="retry-summary-btn" class="button">Retry</button>
-          </div>
-        `;
-        
-        // Add retry button handler
-        document.getElementById('retry-summary-btn').addEventListener('click', function() {
-          refreshSummary();
-        });
+        // Request from plugin as last resort
+        parent.postMessage({ pluginMessage: { type: 'get-summary', immediate: true } }, '*');
       }
     }
     
@@ -3201,6 +3179,76 @@
       } catch (error) {
         console.error('Error loading summary from localStorage:', error);
         return null;
+      }
+    }
+
+    // Define requestSummaryRefresh function at global scope
+    function requestSummaryRefresh() {
+      console.log('Summary refresh requested');
+      document.getElementById('summary-loading').textContent = 'Refreshing summary...';
+      
+      // Try Firebase first if available
+      if (firebaseInitialized && userId) {
+        loadSummaryFromFirebase();
+      } else {
+        // Request from the plugin directly
+        parent.postMessage({ 
+          pluginMessage: { 
+            type: 'get-summary', 
+            immediate: true 
+          } 
+        }, '*');
+      }
+    }
+
+    // Handle summary tab activation
+    function handleSummaryTabActivation() {
+      console.log('Summary tab activated');
+      document.getElementById('summary-loading').textContent = 'Loading summary...';
+      
+      // Display immediate data from in-memory cache if available
+      if (summaryData && Object.keys(summaryData).length > 0) {
+        console.log('Using in-memory summary data for immediate display');
+        updateSummaryDisplay(summaryData);
+      }
+      
+      // Request fresh data from Firebase if available
+      if (firebaseInitialized && userId) {
+        console.log('Requesting fresh data from Firebase');
+        setTimeout(() => {
+          loadSummaryFromFirebase();
+        }, 200);
+      } else {
+        // Try safely loading from localStorage first
+        try {
+          const savedData = loadSummaryFromLocalStorage();
+          if (savedData) {
+            console.log('Using localStorage data');
+            summaryData = savedData;
+            updateSummaryDisplay(savedData);
+          } else {
+            // Request from plugin as fallback
+            console.log('No localStorage data, requesting from plugin');
+            parent.postMessage({ pluginMessage: { type: 'get-summary', immediate: true } }, '*');
+          }
+        } catch (e) {
+          console.error('Error accessing localStorage:', e);
+          // Skip localStorage completely and get data from plugin
+          console.log('localStorage error, requesting from plugin');
+          parent.postMessage({ pluginMessage: { type: 'get-summary', immediate: true } }, '*');
+        }
+      }
+    }
+
+    // Safe check for localStorage availability
+    function isLocalStorageAvailable() {
+      try {
+        const testKey = 'test';
+        localStorage.setItem(testKey, testKey);
+        localStorage.removeItem(testKey);
+        return true;
+      } catch (e) {
+        return false;
       }
     }
 </script>

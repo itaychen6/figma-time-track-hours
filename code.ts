@@ -182,6 +182,11 @@ figma.ui.onmessage = (message: any) => {
     console.log('Start tracking requested from UI');
     handleActivity(); // This will start tracking if not already tracking
   }
+  else if (pluginMessage.type === 'get-summary') {
+    console.log('Summary data requested from UI');
+    // Generate and send summary data directly to UI
+    sendSummaryData(pluginMessage.immediate || false);
+  }
 };
 
 // Start the plugin when UI sends ready message
@@ -748,4 +753,46 @@ async function saveTrackingDataToFirebase(): Promise<void> {
       reject(error);
     }
   });
+}
+
+// Generate and send summary data to UI
+function sendSummaryData(immediate: boolean = false) {
+  console.log('Generating summary data for UI');
+  
+  try {
+    // Create a clean summary data object
+    const summaryData = {};
+    
+    // Only include files with tracking data
+    Object.keys(files).forEach(fileId => {
+      const file = files[fileId];
+      if (file && (file.totalSeconds > 0 || file.totalTime > 0)) {
+        // Create a clean file entry
+        summaryData[fileId] = {
+          id: fileId,
+          name: file.name,
+          totalSeconds: Math.floor((file.totalTime || 0) / 1000) || file.totalSeconds || 0
+        };
+      }
+    });
+    
+    console.log('Sending summary data to UI', Object.keys(summaryData).length, 'files');
+    
+    // Send the data to UI
+    figma.ui.postMessage({
+      type: 'summary-data',
+      data: summaryData,
+      immediate: immediate,
+      timestamp: Date.now()
+    });
+    
+  } catch (error) {
+    console.error('Error generating summary data:', error);
+    
+    // Send error to UI
+    figma.ui.postMessage({
+      type: 'summary-error',
+      error: error.message || 'Unknown error generating summary'
+    });
+  }
 }
