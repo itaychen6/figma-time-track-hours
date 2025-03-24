@@ -870,6 +870,11 @@
       // Immediately load summary data if on summary tab
       if (document.getElementById('summary-tab').classList.contains('active')) {
         loadSummaryFromFirebase();
+      } else {
+        // Load summary data in the background to have it ready
+        setTimeout(() => {
+          loadSummaryFromFirebase(false); // Silent load
+        }, 2000);
       }
       
       // Update UI to show connected status
@@ -1833,6 +1838,63 @@
           }, 1000);
         }
       }
+      else if (msg.type === 'save-to-firebase') {
+        console.log('Received save to Firebase request');
+        
+        if (!firebaseInitialized || !firebaseDb || !userId) {
+          console.warn('Firebase not initialized, cannot save data');
+          return;
+        }
+        
+        // Check if we have files data to save
+        if (msg.files && Object.keys(msg.files).length > 0) {
+          // Save the full detailed tracking data
+          try {
+            const timeDataRef = firebaseDb.ref('timeData/' + userId);
+            await timeDataRef.set(msg.files);
+            console.log('Tracking data saved to Firebase successfully');
+          } catch (error) {
+            console.error('Error saving tracking data to Firebase:', error);
+          }
+          
+          // If there's explicit summary data, save it to the summary path
+          if (msg.summaryData && Object.keys(msg.summaryData).length > 0) {
+            try {
+              const summaryRef = firebaseDb.ref('summary/' + userId);
+              await summaryRef.set(msg.summaryData);
+              console.log('Summary data saved to Firebase successfully');
+              
+              // Keep a local copy for immediate access
+              summaryData = msg.summaryData;
+              
+              // Store a backup in localStorage if available
+              if (isLocalStorageAvailable()) {
+                try {
+                  localStorage.setItem('figmaTimeTrackSummary_backup', JSON.stringify(msg.summaryData));
+                  localStorage.setItem('figmaTimeTrackSummaryTimestamp', Date.now().toString());
+                } catch (e) {
+                  console.warn('Failed to save summary backup to localStorage:', e);
+                }
+              }
+              
+              // Update the UI if summary tab is active
+              if (document.getElementById('summary-tab').classList.contains('active')) {
+                updateSummaryDisplay(msg.summaryData, 'Firebase');
+              }
+            } catch (error) {
+              console.error('Error saving summary data to Firebase:', error);
+            }
+          }
+          
+          // Update last sync timestamp
+          try {
+            const syncRef = firebaseDb.ref('lastSync/' + userId);
+            await syncRef.set(msg.timestamp || Date.now());
+          } catch (error) {
+            console.error('Error updating sync timestamp:', error);
+          }
+        }
+      }
       else if (msg.type === 'tracking-status') {
         console.log('Received tracking status update:', msg);
         
@@ -1919,31 +1981,33 @@
     };
 
     // Load summary data from Firebase
-    function loadSummaryFromFirebase() {
+    function loadSummaryFromFirebase(showLoading = true) {
       console.log('Loading summary data from Firebase');
       
       // Check if Firebase is initialized
       if (!firebaseInitialized || !firebaseDb) {
         console.warn('Firebase not initialized, cannot load summary');
         
-        // Show loading with more informative message
-        document.getElementById('summary-container').innerHTML = `
-          <div class="firebase-loading">
-            <div class="spinner"></div>
-            <p>Waiting for Firebase connection...</p>
-            <small>Firebase initialization in progress. Please wait.</small>
-            <button id="use-local-data-btn" class="small-button">Use local data instead</button>
-          </div>
-        `;
-        
-        // Add button to use local data instead
-        document.getElementById('use-local-data-btn').addEventListener('click', function() {
-          useBackupData();
-        });
+        if (showLoading) {
+          // Show loading with more informative message
+          document.getElementById('summary-container').innerHTML = `
+            <div class="firebase-loading">
+              <div class="spinner"></div>
+              <p>Waiting for Firebase connection...</p>
+              <small>Firebase initialization in progress. Please wait.</small>
+              <button id="use-local-data-btn" class="small-button">Use local data instead</button>
+            </div>
+          `;
+          
+          // Add button to use local data instead
+          document.getElementById('use-local-data-btn').addEventListener('click', function() {
+            useBackupData();
+          });
+        }
         
         // Set a timeout to fall back to local data if Firebase doesn't initialize quickly
         setTimeout(() => {
-          if (!firebaseInitialized) {
+          if (!firebaseInitialized && showLoading) {
             console.warn('Firebase still not initialized after 10 seconds, falling back to local data');
             useBackupData();
           }
@@ -1960,14 +2024,16 @@
       
       activelyFetchingFromFirebase = true;
       
-      // Show loading indicator
-      document.getElementById('summary-container').innerHTML = `
-        <div class="firebase-loading">
-          <div class="spinner"></div>
-          <p>Loading data from Firebase...</p>
-          <small id="firebase-loading-status">Connecting to database...</small>
-        </div>
-      `;
+      if (showLoading) {
+        // Show loading indicator
+        document.getElementById('summary-container').innerHTML = `
+          <div class="firebase-loading">
+            <div class="spinner"></div>
+            <p>Loading data from Firebase...</p>
+            <small id="firebase-loading-status">Connecting to database...</small>
+          </div>
+        `;
+      }
       
       // Update loading status every second to show it's still trying
       let loadingTimeElapsed = 0;
@@ -1986,18 +2052,20 @@
         console.warn(`Firebase fetch timed out after ${timeoutDuration/1000} seconds`);
         activelyFetchingFromFirebase = false;
         
-        document.getElementById('summary-container').innerHTML = `
-          <div class="error-container">
-            <div class="error-icon">⚠️</div>
-            <h3>Loading Timeout</h3>
-            <p>Firebase data loading took too long. Using local data instead.</p>
-            <button id="retry-firebase-load" class="button">Retry Firebase</button>
-          </div>
-        `;
-        
-        document.getElementById('retry-firebase-load').addEventListener('click', function() {
-          loadSummaryFromFirebase();
-        });
+        if (showLoading) {
+          document.getElementById('summary-container').innerHTML = `
+            <div class="error-container">
+              <div class="error-icon">⚠️</div>
+              <h3>Loading Timeout</h3>
+              <p>Firebase data loading took too long. Using local data instead.</p>
+              <button id="retry-firebase-load" class="button">Retry Firebase</button>
+            </div>
+          `;
+          
+          document.getElementById('retry-firebase-load').addEventListener('click', function() {
+            loadSummaryFromFirebase();
+          });
+        }
         
         // Fall back to local data
         useBackupData();
@@ -2019,42 +2087,116 @@
           
           // Calculate how long it took to load
           const loadTime = Date.now() - startTime;
-          console.log(`Firebase data loaded in ${loadTime}ms`);
+          console.log(`Firebase summary data loaded in ${loadTime}ms`);
           
-          // If nothing found, try backup
+          // If nothing found, try loading from timeData as fallback
           if (!data || Object.keys(data).length === 0) {
-            console.log('No data found in Firebase, using backup data');
-            document.getElementById('summary-container').innerHTML = `
-              <div class="no-data-message">
-                <p>No data found in Firebase.</p>
-                <button id="retry-firebase-btn" class="button">Retry</button>
-                <button id="use-local-btn" class="button secondary">Use Local Data</button>
-              </div>
-            `;
+            console.log('No dedicated summary data found in Firebase, trying timeData...');
             
-            document.getElementById('retry-firebase-btn').addEventListener('click', function() {
-              loadSummaryFromFirebase();
-            });
-            
-            document.getElementById('use-local-btn').addEventListener('click', function() {
-              useBackupData();
-            });
+            // Try timeData instead
+            firebaseDb.ref('timeData/' + userId)
+              .once('value')
+              .then(timeDataSnapshot => {
+                const timeData = timeDataSnapshot.val() || {};
+                
+                if (!timeData || Object.keys(timeData).length === 0) {
+                  console.log('No tracking data found in Firebase either');
+                  
+                  if (showLoading) {
+                    document.getElementById('summary-container').innerHTML = `
+                      <div class="no-data-message">
+                        <p>No data found in Firebase.</p>
+                        <button id="retry-firebase-btn" class="button">Retry</button>
+                        <button id="use-local-btn" class="button secondary">Use Local Data</button>
+                      </div>
+                    `;
+                    
+                    document.getElementById('retry-firebase-btn').addEventListener('click', function() {
+                      loadSummaryFromFirebase();
+                    });
+                    
+                    document.getElementById('use-local-btn').addEventListener('click', function() {
+                      useBackupData();
+                    });
+                  }
+                  
+                  return;
+                }
+                
+                // Build summary from tracking data
+                const generatedSummary = {};
+                
+                Object.keys(timeData).forEach(fileId => {
+                  const file = timeData[fileId];
+                  if (file && (file.totalSeconds > 0 || file.totalTime > 0)) {
+                    generatedSummary[fileId] = {
+                      id: fileId,
+                      name: file.name,
+                      totalSeconds: Math.floor((file.totalTime || 0) / 1000) || file.totalSeconds || 0
+                    };
+                  }
+                });
+                
+                console.log('Generated summary from timeData:', Object.keys(generatedSummary).length, 'files');
+                
+                if (Object.keys(generatedSummary).length > 0) {
+                  summaryData = generatedSummary;
+                  
+                  // Save this back as proper summary data
+                  firebaseDb.ref('summary/' + userId).set(generatedSummary)
+                    .then(() => {
+                      console.log('Generated summary saved back to Firebase');
+                    })
+                    .catch(err => {
+                      console.warn('Error saving generated summary back to Firebase:', err);
+                    });
+                  
+                  // Save to localStorage as backup
+                  try {
+                    localStorage.setItem('figmaTimeTrackSummary_backup', JSON.stringify(generatedSummary));
+                    localStorage.setItem('figmaTimeTrackSummaryTimestamp', Date.now().toString());
+                  } catch (e) {
+                    console.warn('Failed to save Firebase summary to localStorage:', e);
+                  }
+                  
+                  // Update the UI with the generated summary
+                  if (showLoading) {
+                    updateSummaryDisplay(generatedSummary, 'Firebase (from tracking data)');
+                  }
+                } else {
+                  console.log('Could not generate valid summary from tracking data');
+                  
+                  if (showLoading) {
+                    useBackupData();
+                  }
+                }
+              })
+              .catch(error => {
+                console.error('Error loading timeData from Firebase:', error);
+                
+                if (showLoading) {
+                  useBackupData();
+                }
+              });
             
             return;
           }
           
-          console.log('Data loaded from Firebase successfully');
+          console.log('Summary data loaded from Firebase successfully:', Object.keys(data).length, 'files');
           summaryData = data;
           
           // Save to localStorage as backup
           try {
             localStorage.setItem('figmaTimeTrackSummary_backup', JSON.stringify(data));
+            localStorage.setItem('figmaTimeTrackSummaryTimestamp', Date.now().toString());
           } catch (e) {
-            console.warn('Failed to save Firebase data to localStorage:', e);
+            console.warn('Failed to save Firebase summary to localStorage:', e);
           }
           
-          // Update the UI with the fetched data
-          updateSummaryDisplay(data, 'Firebase');
+          // Update the UI with the fetched data if requested
+          if (showLoading) {
+            updateSummaryDisplay(data, 'Firebase');
+          }
           
           // Update metadata to indicate we've successfully loaded data
           firebaseDb.ref('metadata/' + userId).update({
@@ -2068,31 +2210,102 @@
           clearInterval(loadingStatusInterval);
           activelyFetchingFromFirebase = false;
           
-          console.error('Error loading from Firebase:', error);
+          console.error('Error loading summary from Firebase:', error);
           
-          document.getElementById('summary-container').innerHTML = `
-            <div class="error-container">
-              <div class="error-icon">❌</div>
-              <h3>Firebase Error</h3>
-              <p>${error.message}</p>
-              <div class="button-row">
-                <button id="retry-firebase-btn" class="button">Retry</button>
-                <button id="fallback-btn" class="button secondary">Use Local Data</button>
+          if (showLoading) {
+            document.getElementById('summary-container').innerHTML = `
+              <div class="error-container">
+                <div class="error-icon">❌</div>
+                <h3>Firebase Error</h3>
+                <p>${error.message}</p>
+                <div class="button-row">
+                  <button id="retry-firebase-btn" class="button">Retry</button>
+                  <button id="fallback-btn" class="button secondary">Use Local Data</button>
+                </div>
               </div>
-            </div>
-          `;
-          
-          document.getElementById('retry-firebase-btn').addEventListener('click', function() {
-            loadSummaryFromFirebase();
-          });
-          
-          document.getElementById('fallback-btn').addEventListener('click', function() {
-            useBackupData();
-          });
+            `;
+            
+            document.getElementById('retry-firebase-btn').addEventListener('click', function() {
+              loadSummaryFromFirebase();
+            });
+            
+            document.getElementById('fallback-btn').addEventListener('click', function() {
+              useBackupData();
+            });
+          }
           
           // Log error for analytics
           logErrorToFirebase('firebase_load_error', error.message);
         });
+    }
+
+    // Set up real-time listener for changes to Firebase data
+    function setupFirebaseDataListener() {
+      if (!firebaseDb || !userId) {
+        console.warn('Firebase not initialized, cannot set up data listener');
+        return;
+      }
+      
+      try {
+        console.log('Setting up Firebase real-time data listeners');
+        
+        // Listen for changes to summary data
+        const summaryRef = firebaseDb.ref('summary/' + userId);
+        
+        // Detach any existing listeners
+        summaryRef.off();
+        
+        // Listen for value changes to summary data
+        summaryRef.on('value', (snapshot) => {
+          const data = snapshot.val();
+          if (data) {
+            console.log('Real-time update from Firebase summary received');
+            
+            // Update in-memory data
+            summaryData = data;
+            lastSavedTimestamp = Date.now();
+            
+            // Always update UI if the summary tab is active
+            if (document.getElementById('summary-tab').classList.contains('active')) {
+              updateSummaryDisplay(data, 'Firebase (real-time)');
+            }
+            
+            // Try to store a backup in localStorage
+            try {
+              localStorage.setItem('figmaTimeTrackSummary_backup', JSON.stringify(summaryData));
+              localStorage.setItem('figmaTimeTrackSummaryTimestamp', Date.now().toString());
+            } catch (e) {
+              console.warn('Could not save Firebase summary data to localStorage backup:', e);
+            }
+            
+            // Update UI with connection status
+            updateFirebaseStatus('Summary data updated from Firebase');
+          }
+        }, (error) => {
+          console.error('Firebase summary listener error:', error);
+          handleFirebaseError(error);
+        });
+        
+        // Also listen for time data changes as a backup
+        const timeDataRef = firebaseDb.ref('timeData/' + userId);
+        timeDataRef.off();
+        
+        timeDataRef.on('value', (snapshot) => {
+          const data = snapshot.val();
+          if (data) {
+            console.log('Real-time update from Firebase timeData received');
+            trackingData = { ...data }; // Clone data for tracking
+            
+            // We don't immediately update the summary from timeData
+            // as the summary data listener should handle that
+          }
+        }, (error) => {
+          console.error('Firebase timeData listener error:', error);
+        });
+        
+      } catch (error) {
+        console.error('Error setting up Firebase data listener:', error);
+      }
     }
     
     // Log errors to Firebase for analytics

@@ -98,16 +98,12 @@ figma.showUI(__html__, { width: 300, height: 460 });
 figma.on('close', () => {
   console.log('Plugin closing, saving final data to Firebase...');
   
-  // Make sure all tracking data is saved to Firebase before closing
-  if (files && Object.keys(files).length > 0) {
-    saveTrackingDataToFirebase()
-      .then(() => {
-        console.log('Final data successfully saved to Firebase before closing');
-      })
-      .catch(error => {
-        console.error('Error saving final data to Firebase:', error);
-      });
-  }
+  // Save summary data explicitly to ensure it persists
+  saveDataToFirebase(true).then(() => {
+    console.log('Summary data successfully saved to Firebase before closing');
+  }).catch(error => {
+    console.error('Error saving summary data to Firebase:', error);
+  });
 });
 
 // First, load all pages before registering event handlers
@@ -208,7 +204,10 @@ function initializePlugin() {
       activityCheckInterval = setInterval(checkActivity, ACTIVITY_CHECK_INTERVAL);
       
       // Set up periodic saving
-      saveInterval = setInterval(saveData, SAVE_INTERVAL);
+      saveInterval = setInterval(() => saveData(false), SAVE_INTERVAL);
+      
+      // Set up Firebase sync interval
+      setInterval(() => saveData(true), FIREBASE_SYNC_INTERVAL);
       
       // Set up heartbeat to check if plugin is still active
       heartbeatInterval = setInterval(heartbeat, HEARTBEAT_INTERVAL);
@@ -465,12 +464,14 @@ function heartbeat() {
 }
 
 // Save data both locally and to Firebase
-async function saveData() {
+async function saveData(forceSyncToFirebase = false) {
   try {
-    // Save to Firebase first (primary storage)
-    if (firebaseInitialized) {
-      console.log('Saving data primarily to Firebase');
-      saveDataToFirebase();
+    // Save to Firebase if it's time for sync or forced
+    const now = Date.now();
+    if (forceSyncToFirebase || !lastFirebaseSync || (now - lastFirebaseSync) > FIREBASE_SYNC_INTERVAL) {
+      console.log('Saving data to Firebase (primary storage)');
+      await saveDataToFirebase(true);
+      lastFirebaseSync = now;
     }
     
     // Also save to client storage as backup
@@ -483,7 +484,7 @@ async function saveData() {
 }
 
 // Save data to Firebase
-async function saveDataToFirebase() {
+async function saveDataToFirebase(forceSummarySync = false) {
   try {
     console.log('Saving data to Firebase');
     
@@ -508,13 +509,40 @@ async function saveDataToFirebase() {
       return;
     }
     
-    // Send data to UI for saving to Firebase
-    figma.ui.postMessage({
-      type: 'save-to-firebase',
-      files: files,
-      userId: userId,
-      timestamp: Date.now()
-    });
+    // Create summary data object for dedicated storage
+    if (forceSummarySync) {
+      const summaryData = {};
+      
+      // Build clean summary data
+      Object.keys(files).forEach(fileId => {
+        const file = files[fileId];
+        if (file && (file.totalSeconds > 0 || file.totalTime > 0)) {
+          summaryData[fileId] = {
+            id: fileId,
+            name: file.name,
+            totalSeconds: Math.floor((file.totalTime || 0) / 1000) || file.totalSeconds || 0
+          };
+        }
+      });
+      
+      // Send message to save both detailed tracking data and summary
+      figma.ui.postMessage({
+        type: 'save-to-firebase',
+        files: files,
+        summaryData: summaryData, // Add dedicated summary data
+        userId: userId,
+        timestamp: Date.now(),
+        forceSummarySync: true
+      });
+    } else {
+      // Regular save with just tracking data
+      figma.ui.postMessage({
+        type: 'save-to-firebase',
+        files: files,
+        userId: userId,
+        timestamp: Date.now()
+      });
+    }
     
     // Update last sync time
     lastFirebaseSync = Date.now();
