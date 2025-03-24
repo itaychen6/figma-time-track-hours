@@ -97,7 +97,11 @@ async function initializePlugin() {
   console.log('Initializing plugin');
   
   // Load summary from client storage
-  await loadSummaryFromClientStorage();
+  const storedData = await loadSummaryFromClientStorage();
+  if (storedData) {
+    files = storedData;
+    console.log('Loaded files from storage:', Object.keys(files));
+  }
   
   // Load background tracking preference
   const bgTracking = await figma.clientStorage.getAsync(BACKGROUND_TRACKING_KEY);
@@ -112,6 +116,12 @@ async function initializePlugin() {
   
   // Check current file immediately
   checkCurrentFile();
+  
+  // Send initial data to UI
+  figma.ui.postMessage({
+    type: 'summary-data',
+    data: files
+  });
 }
 
 // Handle user activity
@@ -130,7 +140,7 @@ function startTracking() {
   isTracking = true;
   console.log('Started tracking');
   
-  // Create or update file entry with proper page structure
+  // Ensure file exists
   if (!files[activeFileId]) {
     files[activeFileId] = {
       id: activeFileId,
@@ -141,13 +151,13 @@ function startTracking() {
     };
   }
   
-  // Create or update page entry with proper nesting
+  // Ensure page exists
   if (!files[activeFileId].pages[activePage]) {
     files[activeFileId].pages[activePage] = {
       id: activePage,
       name: activePageName,
       totalTime: 0,
-      fileId: activeFileId, // Link page to its parent file
+      fileId: activeFileId,
       lastUpdated: Date.now()
     };
   }
@@ -165,7 +175,7 @@ async function stopTracking() {
   const endTime = Date.now();
   const duration = endTime - trackingStartTime;
   
-  // Update tracking data with proper file and page structure
+  // Update tracking data
   if (activeFileId && files[activeFileId]) {
     const file = files[activeFileId];
     file.totalTime = (file.totalTime || 0) + duration;
@@ -183,8 +193,7 @@ async function stopTracking() {
     // Send updated summary to UI
     figma.ui.postMessage({
       type: 'summary-data',
-      data: files,
-      currentFileId: activeFileId // Send current file ID for context
+      data: files
     });
   }
   
@@ -194,7 +203,7 @@ async function stopTracking() {
     isTracking: false 
   });
   
-  console.log('Stopped tracking');
+  console.log('Stopped tracking. Current files:', Object.keys(files));
 }
 
 // Update UI with current tracking status
@@ -240,7 +249,7 @@ async function handleFileChange(newFileId, newPageId, newFileName, newPageName) 
   activeFileName = newFileName;
   activePageName = newPageName;
   
-  // Ensure the file and page structure exists
+  // Ensure file exists in storage
   if (!files[activeFileId]) {
     files[activeFileId] = {
       id: activeFileId,
@@ -249,8 +258,12 @@ async function handleFileChange(newFileId, newPageId, newFileName, newPageName) 
       totalTime: 0,
       lastUpdated: Date.now()
     };
+    
+    // Save the new file entry
+    await saveSummaryToClientStorage(files);
   }
   
+  // Ensure page exists in file
   if (!files[activeFileId].pages[activePage]) {
     files[activeFileId].pages[activePage] = {
       id: activePage,
@@ -259,8 +272,12 @@ async function handleFileChange(newFileId, newPageId, newFileName, newPageName) 
       fileId: activeFileId,
       lastUpdated: Date.now()
     };
+    
+    // Save the new page entry
+    await saveSummaryToClientStorage(files);
   }
   
+  // Update UI with file change
   figma.ui.postMessage({
     type: 'file-changed',
     fileId: activeFileId,
@@ -268,6 +285,12 @@ async function handleFileChange(newFileId, newPageId, newFileName, newPageName) 
     pageId: activePage,
     pageName: activePageName,
     resetTimer: true
+  });
+  
+  // Send updated summary data
+  figma.ui.postMessage({
+    type: 'summary-data',
+    data: files
   });
   
   if (backgroundTracking || isUiVisible) {
@@ -300,7 +323,7 @@ async function saveSummaryToClientStorage(summaryData: any) {
   try {
     await figma.clientStorage.setAsync(SUMMARY_STORAGE_KEY, summaryData);
     await figma.clientStorage.setAsync(LAST_UPDATE_KEY, Date.now());
-    console.log('Summary saved to client storage');
+    console.log('Summary saved to client storage. Files:', Object.keys(summaryData));
   } catch (error) {
     console.error('Error saving to client storage:', error);
   }
@@ -310,10 +333,7 @@ async function loadSummaryFromClientStorage() {
   try {
     const summaryData = await figma.clientStorage.getAsync(SUMMARY_STORAGE_KEY);
     const lastUpdate = await figma.clientStorage.getAsync(LAST_UPDATE_KEY);
-    console.log('Summary loaded from client storage, last updated:', new Date(lastUpdate));
-    if (summaryData) {
-      files = summaryData;
-    }
+    console.log('Summary loaded from client storage, files:', summaryData ? Object.keys(summaryData) : 'none');
     return summaryData || {};
   } catch (error) {
     console.error('Error loading from client storage:', error);

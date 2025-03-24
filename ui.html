@@ -360,14 +360,20 @@
         return;
       }
       
+      console.log('Updating summary display with files:', Object.keys(summaryData));
+      
       // Sort files by total time (descending)
-      const sortedFiles = Object.values(summaryData)
-        .filter(file => file && file.totalTime > 0)
-        .sort((a, b) => (b.totalTime || 0) - (a.totalTime || 0));
+      const sortedFiles = Object.entries(summaryData)
+        .filter(([_, file]) => file && file.totalTime > 0)
+        .sort(([_, a], [_, b]) => (b.totalTime || 0) - (a.totalTime || 0))
+        .map(([_, file]) => file);
+      
+      console.log('Sorted files to display:', sortedFiles.map(f => f.name));
       
       sortedFiles.forEach(file => {
         const fileElement = document.createElement('div');
         fileElement.className = 'file-summary';
+        fileElement.style.marginBottom = '16px';
         
         // File header with name and total time
         const fileHeader = document.createElement('div');
@@ -375,19 +381,21 @@
         fileHeader.style.display = 'flex';
         fileHeader.style.justifyContent = 'space-between';
         fileHeader.style.alignItems = 'center';
-        fileHeader.style.marginBottom = '8px';
-        fileHeader.style.padding = '4px 8px';
+        fileHeader.style.padding = '8px 12px';
         fileHeader.style.background = '#e8e8e8';
         fileHeader.style.borderRadius = '4px';
+        fileHeader.style.marginBottom = '8px';
         
         const nameElement = document.createElement('div');
         nameElement.className = 'file-name';
         nameElement.style.flex = '1';
+        nameElement.style.fontWeight = '500';
         nameElement.textContent = truncateString(file.name, 30);
         
         const timeElement = document.createElement('div');
         timeElement.className = 'file-time';
         timeElement.style.marginLeft = '8px';
+        timeElement.style.color = '#666';
         timeElement.textContent = formatDuration(Math.floor(file.totalTime / 1000));
         
         fileHeader.appendChild(nameElement);
@@ -398,15 +406,17 @@
         if (file.pages && Object.keys(file.pages).length > 0) {
           const pagesContainer = document.createElement('div');
           pagesContainer.className = 'pages-container';
-          pagesContainer.style.marginTop = '8px';
           pagesContainer.style.marginLeft = '16px';
           pagesContainer.style.borderLeft = '2px solid #e0e0e0';
           pagesContainer.style.paddingLeft = '12px';
           
           // Filter and sort pages that belong to this file
-          const sortedPages = Object.values(file.pages)
-            .filter(page => page && page.totalTime > 0 && page.fileId === file.id)
-            .sort((a, b) => (b.totalTime || 0) - (a.totalTime || 0));
+          const sortedPages = Object.entries(file.pages)
+            .filter(([_, page]) => page && page.totalTime > 0 && page.fileId === file.id)
+            .sort(([_, a], [_, b]) => (b.totalTime || 0) - (a.totalTime || 0))
+            .map(([_, page]) => page);
+          
+          console.log(`Pages for file ${file.name}:`, sortedPages.map(p => p.name));
           
           sortedPages.forEach(page => {
             const pageElement = document.createElement('div');
@@ -414,8 +424,7 @@
             pageElement.style.display = 'flex';
             pageElement.style.justifyContent = 'space-between';
             pageElement.style.alignItems = 'center';
-            pageElement.style.marginBottom = '6px';
-            pageElement.style.padding = '2px 0';
+            pageElement.style.padding = '4px 0';
             pageElement.style.fontSize = '13px';
             pageElement.style.color = '#666';
             
