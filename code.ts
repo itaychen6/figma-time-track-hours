@@ -85,7 +85,11 @@ figma.ui.onmessage = async (message: any) => {
   const pluginMessage = message as {type: string, [key: string]: any};
   console.log('Message received from UI:', pluginMessage.type);
 
-  if (pluginMessage.type === 'ui-loaded') {
+  if (pluginMessage.type === 'resize') {
+    // Resize the plugin window
+    figma.ui.resize(300, pluginMessage.height);
+  }
+  else if (pluginMessage.type === 'ui-loaded') {
     // Load and send current tracking status
     await loadSummaryFromClientStorage();
     updateTrackingStatus();
