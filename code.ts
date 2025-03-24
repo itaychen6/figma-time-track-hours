@@ -98,11 +98,16 @@ figma.showUI(__html__, { width: 300, height: 460 });
 figma.on('close', () => {
   console.log('Plugin closing, saving final data to Firebase...');
   
-  // Save summary data explicitly to ensure it persists
-  saveDataToFirebase(true).then(() => {
+  // Save the detailed tracking data first
+  saveTrackingDataToFirebase().then(() => {
+    console.log('Tracking data saved to Firebase before closing');
+    
+    // Then explicitly save summary data to ensure it persists
+    return saveDataToFirebase(true);
+  }).then(() => {
     console.log('Summary data successfully saved to Firebase before closing');
   }).catch(error => {
-    console.error('Error saving summary data to Firebase:', error);
+    console.error('Error saving data to Firebase on close:', error);
   });
 });
 
@@ -120,8 +125,14 @@ figma.loadAllPagesAsync().then(() => {
   });
   
   console.log('All pages loaded, event handlers registered');
+  
+  // Start the plugin after a short delay to ensure UI is ready
+  setTimeout(initializePlugin, 100);
 }).catch(error => {
   console.error('Error loading all pages:', error);
+  
+  // Still try to initialize the plugin even if page loading fails
+  setTimeout(initializePlugin, 100);
 });
 
 // Handle messages from the UI
@@ -145,7 +156,7 @@ figma.ui.onmessage = (message: any) => {
     // Automatically send summary data whenever UI loads
     setTimeout(() => {
       sendSummaryData(true);
-    }, 1000);
+    }, 500);
   }
   else if (pluginMessage.type === 'reinitialize-firebase') {
     console.log('Reinitializing Firebase connection...');
@@ -167,6 +178,10 @@ figma.ui.onmessage = (message: any) => {
           console.log('Manual Firebase sync completed');
           
           // Also send summary data when manual sync is completed
+          return saveDataToFirebase(true);
+        })
+        .then(() => {
+          // Refresh the UI with latest data
           sendSummaryData(true);
         })
         .catch(error => {
@@ -226,9 +241,10 @@ function initializePlugin() {
       
       // Set up explicit Firebase sync interval (shorter interval for summary sync)
       setInterval(() => {
-        saveDataToFirebase(true);
-        // Also send updated summary data to UI
-        sendSummaryData(false);
+        saveDataToFirebase(true).then(() => {
+          // Also send updated summary data to UI after successful Firebase save
+          sendSummaryData(false);
+        });
       }, FIREBASE_SYNC_INTERVAL);
       
       // Set up heartbeat to check if plugin is still active
@@ -268,7 +284,7 @@ function initializePlugin() {
             sendSummaryData(true);
             
             console.log('Sent initial tracking status to UI');
-          }, 1000);
+          }, 300);
         }).catch(error => {
           console.error('Error loading background tracking setting:', error);
           // Use default if error
@@ -514,7 +530,7 @@ async function saveData(forceSyncToFirebase = false) {
 }
 
 // Save data to Firebase
-async function saveDataToFirebase(forceSummarySync = false) {
+async function saveDataToFirebase(forceSummarySync = false): Promise<void> {
   try {
     console.log('Saving data to Firebase');
     
@@ -526,7 +542,7 @@ async function saveDataToFirebase(forceSummarySync = false) {
         config: firebaseConfig,
         userId: userId
       });
-      return;
+      return Promise.reject(new Error('Firebase not initialized'));
     }
     
     // Check if we have non-empty data to save
@@ -536,7 +552,7 @@ async function saveDataToFirebase(forceSummarySync = false) {
         type: 'firebase-status',
         status: 'No data to save'
       });
-      return;
+      return Promise.resolve(undefined);
     }
     
     // Always create summary data object for more reliable persistence
@@ -554,20 +570,37 @@ async function saveDataToFirebase(forceSummarySync = false) {
       }
     });
     
-    // Send message to save both detailed tracking data and summary
-    figma.ui.postMessage({
-      type: 'save-to-firebase',
-      files: files,
-      summaryData: summaryData, // Always include summary data
-      userId: userId,
-      timestamp: Date.now(),
-      forceSummarySync: true
+    return new Promise<void>((resolve, reject) => {
+      // Set a timeout to ensure the operation doesn't hang indefinitely
+      const timeoutId = setTimeout(() => {
+        console.warn('Firebase save operation timed out');
+        resolve(undefined); // Resolve anyway to avoid blocking the plugin
+      }, 5000);
+      
+      // Send message to save both detailed tracking data and summary
+      figma.ui.postMessage({
+        type: 'save-to-firebase',
+        files: files,
+        summaryData: summaryData, // Always include summary data
+        userId: userId,
+        timestamp: Date.now(),
+        forceSummarySync: true
+      });
+      
+      // We can't wait for confirmation from the UI, so we resolve immediately
+      // but leave the timeout in case there's an issue
+      setTimeout(() => {
+        clearTimeout(timeoutId);
+        resolve(undefined);
+      }, 300);
+      
+      // Update last sync time
+      lastFirebaseSync = Date.now();
     });
     
-    // Update last sync time
-    lastFirebaseSync = Date.now();
   } catch (error) {
     console.error('Error saving to Firebase:', error);
+    return Promise.reject(error);
   }
 }
 
@@ -646,7 +679,7 @@ async function loadPluginData() {
         // Also request summary data explicitly
         sendSummaryData(true);
       }
-    }, 1000);
+    }, 500);
     
     // Set a timeout to fall back to client storage if Firebase doesn't initialize
     setTimeout(() => {
@@ -656,7 +689,7 @@ async function loadPluginData() {
         // Only now try to load from client storage as a fallback
         fallbackToClientStorage();
       }
-    }, 10000); // Wait 10 seconds for Firebase before falling back
+    }, 5000); // Wait 5 seconds for Firebase before falling back
   } catch (error) {
     console.error('Error in loadPluginData:', error);
     fallbackToClientStorage();
@@ -839,6 +872,13 @@ function sendSummaryData(immediate: boolean = false) {
       immediate: immediate,
       timestamp: Date.now()
     });
+    
+    // Also save this summary data to Firebase for persistence
+    if (firebaseInitialized && userId) {
+      saveDataToFirebase(true).catch(error => {
+        console.error('Error saving summary data to Firebase after generating:', error);
+      });
+    }
     
   } catch (error) {
     console.error('Error generating summary data:', error);
