@@ -362,6 +362,7 @@
       
       // Sort files by total time (descending)
       const sortedFiles = Object.values(summaryData)
+        .sort((a, b) => (b.lastUpdated || 0) - (a.lastUpdated || 0))
         .sort((a, b) => (b.totalTime || 0) - (a.totalTime || 0));
       
       sortedFiles.forEach(file => {
@@ -370,44 +371,74 @@
         const fileElement = document.createElement('div');
         fileElement.className = 'file-summary';
         
+        const fileHeader = document.createElement('div');
+        fileHeader.className = 'file-header';
+        fileHeader.style.display = 'flex';
+        fileHeader.style.justifyContent = 'space-between';
+        fileHeader.style.alignItems = 'center';
+        fileHeader.style.marginBottom = '8px';
+        
         const nameElement = document.createElement('div');
         nameElement.className = 'file-name';
+        nameElement.style.flex = '1';
         nameElement.textContent = truncateString(file.name, 30);
         
         const timeElement = document.createElement('div');
         timeElement.className = 'file-time';
+        timeElement.style.marginLeft = '8px';
         timeElement.textContent = formatDuration(Math.floor(file.totalTime / 1000));
+        
+        fileHeader.appendChild(nameElement);
+        fileHeader.appendChild(timeElement);
+        fileElement.appendChild(fileHeader);
         
         // Add page details if they exist
         if (file.pages && Object.keys(file.pages).length > 0) {
-          const pagesElement = document.createElement('div');
-          pagesElement.className = 'page-details';
-          pagesElement.style.fontSize = '12px';
-          pagesElement.style.color = '#666';
-          pagesElement.style.marginTop = '4px';
-          pagesElement.style.paddingLeft = '8px';
+          const pagesContainer = document.createElement('div');
+          pagesContainer.className = 'pages-container';
+          pagesContainer.style.marginLeft = '16px';
+          pagesContainer.style.borderLeft = '2px solid #e0e0e0';
+          pagesContainer.style.paddingLeft = '12px';
           
-          Object.values(file.pages)
-            .sort((a, b) => (b.totalTime || 0) - (a.totalTime || 0))
-            .forEach(page => {
-              if (!page || !page.totalTime) return;
-              const pageTime = document.createElement('div');
-              pageTime.textContent = `${truncateString(page.name, 25)}: ${formatDuration(Math.floor(page.totalTime / 1000))}`;
-              pagesElement.appendChild(pageTime);
-            });
+          // Sort pages by time and last updated
+          const sortedPages = Object.values(file.pages)
+            .filter(page => page && page.totalTime > 0 && page.fileId === file.id)
+            .sort((a, b) => (b.lastUpdated || 0) - (a.lastUpdated || 0))
+            .sort((a, b) => (b.totalTime || 0) - (a.totalTime || 0));
           
-          if (pagesElement.children.length > 0) {
-            fileElement.appendChild(nameElement);
-            fileElement.appendChild(timeElement);
-            fileElement.appendChild(pagesElement);
+          sortedPages.forEach(page => {
+            const pageElement = document.createElement('div');
+            pageElement.className = 'page-summary';
+            pageElement.style.display = 'flex';
+            pageElement.style.justifyContent = 'space-between';
+            pageElement.style.alignItems = 'center';
+            pageElement.style.marginBottom = '4px';
+            pageElement.style.fontSize = '13px';
+            pageElement.style.color = '#666';
+            
+            const pageName = document.createElement('div');
+            pageName.style.flex = '1';
+            pageName.textContent = truncateString(page.name, 25);
+            
+            const pageTime = document.createElement('div');
+            pageTime.style.marginLeft = '8px';
+            pageTime.textContent = formatDuration(Math.floor(page.totalTime / 1000));
+            
+            pageElement.appendChild(pageName);
+            pageElement.appendChild(pageTime);
+            pagesContainer.appendChild(pageElement);
+          });
+          
+          if (pagesContainer.children.length > 0) {
+            fileElement.appendChild(pagesContainer);
           }
-        } else {
-          fileElement.appendChild(nameElement);
-          fileElement.appendChild(timeElement);
         }
         
         container.appendChild(fileElement);
       });
+      
+      // Add scroll if content overflows
+      container.style.overflowY = 'auto';
     }
 
     // Set up event listeners

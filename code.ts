@@ -130,22 +130,25 @@ function startTracking() {
   isTracking = true;
   console.log('Started tracking');
   
-  // Create or update file entry
+  // Create or update file entry with proper page structure
   if (!files[activeFileId]) {
     files[activeFileId] = {
       id: activeFileId,
       name: activeFileName,
       pages: {},
-      totalTime: 0
+      totalTime: 0,
+      lastUpdated: Date.now()
     };
   }
   
-  // Create or update page entry
+  // Create or update page entry with proper nesting
   if (!files[activeFileId].pages[activePage]) {
     files[activeFileId].pages[activePage] = {
       id: activePage,
       name: activePageName,
-      totalTime: 0
+      totalTime: 0,
+      fileId: activeFileId, // Link page to its parent file
+      lastUpdated: Date.now()
     };
   }
   
@@ -162,13 +165,16 @@ async function stopTracking() {
   const endTime = Date.now();
   const duration = endTime - trackingStartTime;
   
-  // Update tracking data
+  // Update tracking data with proper file and page structure
   if (activeFileId && files[activeFileId]) {
     const file = files[activeFileId];
     file.totalTime = (file.totalTime || 0) + duration;
+    file.lastUpdated = Date.now();
     
     if (activePage && file.pages && file.pages[activePage]) {
-      file.pages[activePage].totalTime = (file.pages[activePage].totalTime || 0) + duration;
+      const page = file.pages[activePage];
+      page.totalTime = (page.totalTime || 0) + duration;
+      page.lastUpdated = Date.now();
     }
     
     // Save to client storage
@@ -177,7 +183,8 @@ async function stopTracking() {
     // Send updated summary to UI
     figma.ui.postMessage({
       type: 'summary-data',
-      data: files
+      data: files,
+      currentFileId: activeFileId // Send current file ID for context
     });
   }
   
@@ -232,6 +239,27 @@ async function handleFileChange(newFileId, newPageId, newFileName, newPageName) 
   activePage = newPageId;
   activeFileName = newFileName;
   activePageName = newPageName;
+  
+  // Ensure the file and page structure exists
+  if (!files[activeFileId]) {
+    files[activeFileId] = {
+      id: activeFileId,
+      name: activeFileName,
+      pages: {},
+      totalTime: 0,
+      lastUpdated: Date.now()
+    };
+  }
+  
+  if (!files[activeFileId].pages[activePage]) {
+    files[activeFileId].pages[activePage] = {
+      id: activePage,
+      name: activePageName,
+      totalTime: 0,
+      fileId: activeFileId,
+      lastUpdated: Date.now()
+    };
+  }
   
   figma.ui.postMessage({
     type: 'file-changed',
