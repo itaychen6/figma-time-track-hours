@@ -10,6 +10,10 @@ const INACTIVE_THRESHOLD = 5000; // Consider user inactive after this time (in m
 const FIREBASE_SYNC_INTERVAL = 300000; // Sync with Firebase every 5 minutes
 const PLUGIN_REACTIVATION_DELAY = 500; // Delay before reactivating plugin (in ms)
 
+// Add these constants at the top of the file
+const SUMMARY_STORAGE_KEY = 'timeTrackingSummary';
+const LAST_UPDATE_KEY = 'lastSummaryUpdate';
+
 // Firebase configuration
 const firebaseConfig = {
   apiKey: "AIzaSyC5tcWk3ktDq8xd6fRXdNMupK9XPUTNpng",
@@ -219,90 +223,33 @@ figma.ui.onmessage = (message: any) => {
 };
 
 // Start the plugin when UI sends ready message
-function initializePlugin() {
-  console.log('Initializing plugin...');
+async function initializePlugin() {
+  console.log('Initializing plugin');
   
-  // Try to load user ID from client storage for persistence
-  figma.clientStorage.getAsync('figmaTimeTrackUserId')
-    .then(storedUserId => {
-      if (storedUserId) {
-        console.log('Found stored user ID:', storedUserId);
-        userId = storedUserId;
-      }
-      
-      // Set up file change checking
-      fileCheckInterval = setInterval(checkCurrentFile, FILE_CHECK_INTERVAL);
-      
-      // Set up activity checking
-      activityCheckInterval = setInterval(checkActivity, ACTIVITY_CHECK_INTERVAL);
-      
-      // Set up periodic saving (with forced summary sync)
-      saveInterval = setInterval(() => saveData(true), SAVE_INTERVAL);
-      
-      // Set up explicit Firebase sync interval (shorter interval for summary sync)
-      setInterval(() => {
-        saveDataToFirebase(true).then(() => {
-          // Also send updated summary data to UI after successful Firebase save
-          sendSummaryData(false);
-        });
-      }, FIREBASE_SYNC_INTERVAL);
-      
-      // Set up heartbeat to check if plugin is still active
-      heartbeatInterval = setInterval(heartbeat, HEARTBEAT_INTERVAL);
-      
-      // Initial loading of saved data
-      loadPluginData();
-      
-      // Check current file immediately
-      checkCurrentFile();
-      
-      // Wait a bit to ensure UI is loaded before starting tracking
-      setTimeout(() => {
-        // Load background tracking preference
-        figma.clientStorage.getAsync('backgroundTracking').then(value => {
-          if (value !== undefined && value !== null) {
-            backgroundTracking = value;
-          }
-          console.log('Background tracking setting loaded:', backgroundTracking);
-          
-          // Start tracking automatically when plugin loads
-          console.log('Starting initial tracking...');
-          handleActivity();
-          
-          // Explicitly update UI with tracking status and all files data after slight delay
-          setTimeout(() => {
-            sendAllFilesData();
-            updateTrackingStatus();
-            
-            // Send the backgroundTracking state to UI
-            figma.ui.postMessage({
-              type: 'background-tracking-state',
-              enabled: backgroundTracking
-            });
-            
-            // Automatically send summary data to UI
-            sendSummaryData(true);
-            
-            console.log('Sent initial tracking status to UI');
-          }, 300);
-        }).catch(error => {
-          console.error('Error loading background tracking setting:', error);
-          // Use default if error
-          console.log('Using default background tracking setting:', backgroundTracking);
-        });
-      }, PLUGIN_REACTIVATION_DELAY);
-    })
-    .catch(err => {
-      console.warn('Could not load user ID from client storage:', err);
-      
-      // Continue with initialization anyway
-      fileCheckInterval = setInterval(checkCurrentFile, FILE_CHECK_INTERVAL);
-      activityCheckInterval = setInterval(checkActivity, ACTIVITY_CHECK_INTERVAL);
-      saveInterval = setInterval(() => saveData(true), SAVE_INTERVAL);
-      heartbeatInterval = setInterval(heartbeat, HEARTBEAT_INTERVAL);
-      loadPluginData();
-      checkCurrentFile();
-    });
+  // Load summary from client storage first
+  const storedSummary = await loadSummaryFromClientStorage();
+  if (storedSummary && Object.keys(storedSummary).length > 0) {
+    files = storedSummary;
+    console.log('Loaded summary from client storage');
+  }
+  
+  // Set up message handlers with correct type
+  figma.ui.onmessage = async (pluginMessage: any) => {
+    if (pluginMessage.type === 'get-summary') {
+      const summaryData = generateSummaryData();
+      figma.ui.postMessage({ 
+        type: 'summary-data',
+        data: summaryData
+      });
+    }
+    // ... rest of the message handlers ...
+  };
+  
+  // Initialize Firebase
+  await initializeFirebase();
+  
+  // Show UI
+  figma.showUI(__html__, { width: 300, height: 400 });
 }
 
 // Handle user activity
@@ -359,37 +306,37 @@ function startTracking() {
 }
 
 // Stop time tracking
-function stopTracking() {
+async function stopTracking() {
   if (!isTracking) return;
   
   isTracking = false;
-  console.log('Stopped tracking');
+  const endTime = Date.now();
+  const duration = endTime - trackingStartTime;
   
-  // Update most recent time entry
-  if (files[activeFileId] && 
-      files[activeFileId].pages[activePage] && 
-      files[activeFileId].pages[activePage].entries.length > 0) {
+  // Update tracking data
+  if (activeFileId && files[activeFileId]) {
+    const file = files[activeFileId];
+    file.totalTime = (file.totalTime || 0) + duration;
     
-    const entries = files[activeFileId].pages[activePage].entries;
-    const lastEntry = entries[entries.length - 1];
-    
-    if (lastEntry && !lastEntry.end) {
-      lastEntry.end = Date.now();
-      lastEntry.seconds = Math.floor((lastEntry.end - lastEntry.start) / 1000);
-      
-      // Update totals
-      files[activeFileId].pages[activePage].totalSeconds += lastEntry.seconds;
-      files[activeFileId].totalSeconds += lastEntry.seconds;
+    if (activePage && file.pages && file.pages[activePage]) {
+      file.pages[activePage].totalTime = (file.pages[activePage].totalTime || 0) + duration;
     }
+    
+    // Save to client storage
+    const summaryData = generateSummaryData();
+    await saveSummaryToClientStorage(summaryData);
   }
   
-  updateTrackingStatus();
+  // Save to Firebase if available
+  if (firebaseInitialized) {
+    await saveDataToFirebase(true);
+  }
   
-  // Save data and explicitly save summary to ensure it's preserved
-  saveData(true);
-  
-  // Send updated summary data to UI immediately
-  sendSummaryData(true);
+  // Update UI
+  figma.ui.postMessage({ 
+    type: 'tracking-status', 
+    isTracking: false 
+  });
 }
 
 // Update UI with current tracking status
@@ -888,5 +835,80 @@ function sendSummaryData(immediate: boolean = false) {
       type: 'summary-error',
       error: error.message || 'Unknown error generating summary'
     });
+  }
+}
+
+// Add these functions for client storage
+async function saveSummaryToClientStorage(summaryData: any) {
+  try {
+    await figma.clientStorage.setAsync(SUMMARY_STORAGE_KEY, summaryData);
+    await figma.clientStorage.setAsync(LAST_UPDATE_KEY, Date.now());
+    console.log('Summary saved to client storage');
+  } catch (error) {
+    console.error('Error saving to client storage:', error);
+  }
+}
+
+async function loadSummaryFromClientStorage() {
+  try {
+    const summaryData = await figma.clientStorage.getAsync(SUMMARY_STORAGE_KEY);
+    const lastUpdate = await figma.clientStorage.getAsync(LAST_UPDATE_KEY);
+    console.log('Summary loaded from client storage, last updated:', new Date(lastUpdate));
+    return summaryData || {};
+  } catch (error) {
+    console.error('Error loading from client storage:', error);
+    return {};
+  }
+}
+
+// Add the generateSummaryData function
+function generateSummaryData() {
+  const summary = {};
+  
+  // Generate summary for each file
+  Object.keys(files).forEach(fileId => {
+    const file = files[fileId];
+    if (!file) return;
+    
+    summary[fileId] = {
+      id: fileId,
+      name: file.name,
+      totalTime: file.totalTime || 0,
+      pages: {}
+    };
+    
+    // Add page data if it exists
+    if (file.pages) {
+      Object.keys(file.pages).forEach(pageId => {
+        const page = file.pages[pageId];
+        if (!page) return;
+        
+        summary[fileId].pages[pageId] = {
+          id: pageId,
+          name: page.name,
+          totalTime: page.totalTime || 0
+        };
+      });
+    }
+  });
+  
+  return summary;
+}
+
+// Add the initializeFirebase function
+async function initializeFirebase() {
+  if (firebaseInitialized) return;
+  
+  try {
+    // Get Firebase config from environment or constants
+    const config = {
+      // Your Firebase config here
+    };
+    
+    // Initialize Firebase (implementation depends on your setup)
+    firebaseInitialized = true;
+    console.log('Firebase initialized');
+  } catch (error) {
+    console.error('Error initializing Firebase:', error);
   }
 }
