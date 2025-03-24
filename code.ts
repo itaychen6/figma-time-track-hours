@@ -8,6 +8,9 @@ const SAVE_INTERVAL = 60000; // How often to save to local storage (in ms)
 const INACTIVE_THRESHOLD = 5000; // Consider user inactive after this time (in ms)
 const NOTIFICATION_INTERVAL = 900000; // Show notification every 15 minutes (15 * 60 * 1000 ms)
 
+// Add new constant for background activity check
+const BACKGROUND_CHECK_INTERVAL = 3000; // Check background activity every 3 seconds
+
 // Storage keys
 const SUMMARY_STORAGE_KEY = 'timeTrackingSummary';
 const LAST_UPDATE_KEY = 'lastSummaryUpdate';
@@ -51,6 +54,9 @@ let files: Files = {};
 let trackingStartTime = 0;
 let lastNotificationTime = Date.now();
 
+// Add background interval
+let backgroundCheckInterval: number;
+
 // Plugin initialization
 figma.showUI(__html__, { width: 300, height: 400 });
 
@@ -58,6 +64,11 @@ figma.showUI(__html__, { width: 300, height: 400 });
 figma.on('close', async () => {
   console.log('Plugin UI closing, continuing in background...');
   isUiVisible = false;
+  
+  // Start background checking if not already running
+  if (!backgroundCheckInterval) {
+    backgroundCheckInterval = setInterval(checkBackgroundActivity, BACKGROUND_CHECK_INTERVAL);
+  }
   
   // If tracking is active, show notification
   if (isTracking) {
@@ -67,6 +78,11 @@ figma.on('close', async () => {
 
 figma.on('run', () => {
   isUiVisible = true;
+  // Clear background interval when UI opens
+  if (backgroundCheckInterval) {
+    clearInterval(backgroundCheckInterval);
+    backgroundCheckInterval = 0;
+  }
 });
 
 // First, load all pages before registering event handlers
@@ -164,6 +180,18 @@ function startTracking() {
   isTracking = true;
   console.log('Started tracking');
   
+  // Ensure we have current file and page info
+  const currentFileId = figma.currentPage.parent.id;
+  const currentFileName = (figma.currentPage.parent as DocumentNode).name;
+  const currentPageId = figma.currentPage.id;
+  const currentPageName = figma.currentPage.name;
+  
+  // Update active file and page info
+  activeFileId = currentFileId;
+  activeFileName = currentFileName;
+  activePage = currentPageId;
+  activePageName = currentPageName;
+  
   // Create or update file entry
   if (!files[activeFileId]) {
     files[activeFileId] = {
@@ -187,7 +215,8 @@ function startTracking() {
   }
   
   trackingStartTime = Date.now();
-  lastNotificationTime = Date.now(); // Reset notification timer
+  lastNotificationTime = Date.now();
+  lastActivityTime = Date.now();
   
   // Show initial background notification
   if (!isUiVisible) {
@@ -358,22 +387,14 @@ async function handleFileChange(newFileId: string, newPageId: string, newFileNam
 function checkActivity() {
   const now = Date.now();
   
-  // Only stop tracking if user is truly inactive
-  if (isTracking && (now - lastActivityTime > INACTIVE_THRESHOLD)) {
-    // Check if there were any document changes
+  // Only stop tracking if user is truly inactive and UI is visible
+  if (isTracking && isUiVisible && (now - lastActivityTime > INACTIVE_THRESHOLD)) {
     const hadRecentChanges = checkForRecentChanges();
     
     if (!hadRecentChanges) {
       console.log('User inactive, stopping tracking');
       stopTracking();
     }
-  }
-  
-  // Show periodic notifications when tracking in background
-  if (isTracking && !isUiVisible && (now - lastNotificationTime > NOTIFICATION_INTERVAL)) {
-    const timeTracked = formatDuration(Math.floor((now - trackingStartTime) / 1000));
-    figma.notify(`Still tracking time: ${timeTracked} on "${activePageName}"`);
-    lastNotificationTime = now;
   }
 }
 
@@ -436,4 +457,44 @@ function formatDuration(seconds: number): string {
   const hours = Math.floor(seconds / 3600);
   const minutes = Math.floor((seconds % 3600) / 60);
   return `${hours}h ${minutes}m`;
+}
+
+// Add background activity checking
+function checkBackgroundActivity() {
+  const now = Date.now();
+  
+  try {
+    // Get current file and page info
+    const currentFileId = figma.currentPage.parent.id;
+    const currentPageId = figma.currentPage.id;
+    const currentFileName = (figma.currentPage.parent as DocumentNode).name;
+    const currentPageName = figma.currentPage.name;
+    
+    // Check if file or page changed
+    if (currentFileId !== activeFileId || currentPageId !== activePage) {
+      handleFileChange(currentFileId, currentPageId, currentFileName, currentPageName);
+    }
+    
+    // Check for user activity in background
+    if (figma.currentPage.selection.length > 0 || figma.viewport.zoom !== figma.viewport.zoom) {
+      lastActivityTime = now;
+      
+      // Start tracking if not already tracking
+      if (!isTracking && backgroundTracking) {
+        startTracking();
+      }
+    }
+    
+    // Show periodic notifications
+    if (isTracking && !isUiVisible && (now - lastNotificationTime > NOTIFICATION_INTERVAL)) {
+      const timeTracked = formatDuration(Math.floor((now - trackingStartTime) / 1000));
+      figma.notify(`Still tracking time: ${timeTracked} on "${activePageName}"`);
+      lastNotificationTime = now;
+      
+      // Save data more frequently in background
+      saveData();
+    }
+  } catch (error) {
+    console.error('Error in background activity check:', error);
+  }
 }
