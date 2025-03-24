@@ -8,642 +8,380 @@
       padding: 16px;
       color: #333;
       background: #fff;
-      height: 368px; /* 400px - 32px padding */
-      box-sizing: border-box;
-      overflow: hidden;
     }
-
+    
     .container {
-      display: flex;
-      flex-direction: column;
-      height: 100%;
+      max-width: 100%;
+      padding: 0;
     }
-
+    
     .tab-navigation {
       display: flex;
       margin-bottom: 16px;
       border-bottom: 1px solid #e0e0e0;
-      padding-bottom: 8px;
     }
-
+    
     .tab-button {
-      background: none;
-      border: none;
       padding: 8px 16px;
-      margin-right: 8px;
-      cursor: pointer;
-      color: #666;
-      font-weight: 500;
-      border-radius: 4px;
-    }
-
-    .tab-button.active {
-      background: #18A0FB;
-      color: white;
-    }
-
-    .tab-content {
-      display: none;
-      flex: 1;
-      overflow: hidden;
-    }
-
-    .tab-content.active {
-      display: flex;
-      flex-direction: column;
-    }
-
-    /* Tracking Tab */
-    #tracking-tab {
-      gap: 16px;
-    }
-
-    .status-display {
-      background: #f5f5f5;
-      padding: 12px;
-      border-radius: 6px;
-      margin-bottom: 8px;
-    }
-
-    .file-info {
+      border: none;
+      background: none;
       font-size: 14px;
       color: #666;
-      margin-bottom: 8px;
+      cursor: pointer;
+      border-bottom: 2px solid transparent;
+      transition: all 0.2s ease;
     }
-
+    
+    .tab-button.active {
+      color: #18A0FB;
+      border-bottom-color: #18A0FB;
+    }
+    
+    .tab-content {
+      display: none;
+      padding: 16px 0;
+    }
+    
+    .tab-content.active {
+      display: block;
+    }
+    
+    .tracking-status {
+      padding: 12px;
+      background: #f5f5f5;
+      border-radius: 6px;
+      margin-bottom: 16px;
+    }
+    
+    .tracking-status.active {
+      background: #E3F2FD;
+      color: #1976D2;
+    }
+    
+    .file-info {
+      font-size: 14px;
+      margin-bottom: 16px;
+    }
+    
     .timer-display {
       font-size: 24px;
-      font-weight: bold;
+      font-weight: 500;
       text-align: center;
-      margin: 16px 0;
+      margin: 24px 0;
+      color: #18A0FB;
     }
-
+    
     .button-container {
       display: flex;
       gap: 8px;
+      margin-top: 16px;
     }
-
+    
     button {
       flex: 1;
       padding: 8px 16px;
       border: none;
       border-radius: 4px;
+      font-size: 14px;
       cursor: pointer;
-      font-weight: 500;
-      transition: background-color 0.2s;
+      transition: all 0.2s ease;
     }
-
-    .start-button {
+    
+    button.primary {
       background: #18A0FB;
       color: white;
     }
-
-    .stop-button {
-      background: #EB4D4D;
-      color: white;
-    }
-
-    /* Summary Tab */
-    #summary-tab {
-      gap: 12px;
-    }
-
-    .summary-header {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      margin-bottom: 8px;
-    }
-
-    .summary-content {
-      flex: 1;
-      overflow: hidden;
-    }
-
-    .file-summary {
-      background: #f5f5f5;
-      padding: 12px;
-      border-radius: 6px;
-      margin-bottom: 8px;
-    }
-
-    .file-summary:last-child {
-      margin-bottom: 0;
-    }
-
-    .file-name {
-      font-weight: 500;
-      margin-bottom: 4px;
-    }
-
-    .file-time {
-      color: #666;
-      font-size: 14px;
-    }
-
-    /* Settings Tab */
-    #settings-tab {
-      gap: 16px;
-    }
-
-    .setting-item {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      padding: 8px 0;
-    }
-
-    .setting-label {
-      font-size: 14px;
+    
+    button.secondary {
+      background: #f0f0f0;
       color: #333;
     }
-
-    .switch {
-      position: relative;
-      display: inline-block;
-      width: 40px;
-      height: 20px;
-    }
-
-    .switch input {
-      opacity: 0;
-      width: 0;
-      height: 0;
-    }
-
-    .slider {
-      position: absolute;
-      cursor: pointer;
-      top: 0;
-      left: 0;
-      right: 0;
-      bottom: 0;
-      background-color: #ccc;
-      transition: .4s;
-      border-radius: 20px;
-    }
-
-    .slider:before {
-      position: absolute;
-      content: "";
-      height: 16px;
-      width: 16px;
-      left: 2px;
-      bottom: 2px;
-      background-color: white;
-      transition: .4s;
-      border-radius: 50%;
-    }
-
-    input:checked + .slider {
-      background-color: #18A0FB;
-    }
-
-    input:checked + .slider:before {
-      transform: translateX(20px);
-    }
-
-    .plugin-container {
-      transition: all 0.3s ease;
-      height: 400px;
+    
+    button:hover {
+      opacity: 0.9;
     }
     
-    .plugin-container.minimized {
-      height: 40px;
-      overflow: hidden;
+    .summary-content {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
     }
     
-    .minimize-header {
+    .today-total {
+      font-size: 16px;
+      font-weight: 500;
+      padding: 12px;
+      background: #f0f7ff;
+      border-radius: 6px;
+      color: #18A0FB;
+      margin-bottom: 16px;
+    }
+    
+    .page-summary {
       display: flex;
       justify-content: space-between;
       align-items: center;
       padding: 8px 12px;
-      background-color: #fff;
-      border-bottom: 1px solid #e5e5e5;
-      height: 40px;
-      box-sizing: border-box;
-    }
-    
-    .minimize-header.minimized {
-      border-bottom: none;
-    }
-    
-    .minimize-title {
-      font-weight: 500;
-      font-size: 14px;
-      color: #333;
-      display: flex;
-      align-items: center;
-      gap: 8px;
-    }
-    
-    .minimize-button {
-      background: none;
-      border: none;
-      cursor: pointer;
-      padding: 4px;
-      color: #666;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      width: 24px;
-      height: 24px;
+      background: #f5f5f5;
       border-radius: 4px;
+      font-size: 14px;
+      transition: all 0.3s ease;
     }
     
-    .minimize-button:hover {
-      background-color: #f5f5f5;
+    .page-summary.recent {
+      background: #E3F2FD;
+      border-left: 3px solid #2196F3;
     }
     
-    .minimize-status {
-      font-size: 13px;
+    .page-summary.today {
+      border-left: 3px solid #18A0FB;
+    }
+    
+    .loading {
+      text-align: center;
+      padding: 20px;
       color: #666;
-      margin-left: 8px;
+    }
+    
+    .no-data {
+      text-align: center;
+      padding: 20px;
+      color: #666;
+      font-style: italic;
     }
   </style>
 </head>
 <body>
-  <div class="plugin-container">
-    <div class="minimize-header">
-      <div class="minimize-title">
-        <span>Hours 3</span>
-        <span class="minimize-status" id="minimize-status"></span>
-      </div>
-      <button class="minimize-button" id="minimize-button" title="Minimize/Maximize">
-        <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-          <path d="M2 8H14M8 2V14" stroke="currentColor" stroke-width="2" stroke-linecap="round" id="minimize-icon"/>
-        </svg>
-      </button>
+  <div class="container">
+    <div class="tab-navigation">
+      <button class="tab-button active" data-tab="tracking-tab">Tracking</button>
+      <button class="tab-button" data-tab="summary-tab">Summary</button>
     </div>
     
-    <div id="main-content">
-      <div class="container">
-        <div class="tab-navigation">
-          <button id="tracking-button" class="tab-button active">Tracking</button>
-          <button id="summary-button" class="tab-button">Summary</button>
-          <button id="settings-button" class="tab-button">Settings</button>
-        </div>
-
-        <div id="tracking-tab" class="tab-content active">
-          <div class="status-display">
-            <div class="file-info">
-              <div id="file-name">No file selected</div>
-              <div id="page-name">No page selected</div>
-            </div>
-            <div class="timer-display" id="timer">0h 0m</div>
-          </div>
-          <div class="button-container">
-            <button id="start-button" class="start-button">Start Tracking</button>
-            <button id="stop-button" class="stop-button" style="display: none;">Stop Tracking</button>
-          </div>
-        </div>
-
-        <div id="summary-tab" class="tab-content">
-          <div class="summary-header">
-            <h3 style="margin: 0;">Time Summary</h3>
-          </div>
-          <div class="summary-content" id="summary-content"></div>
-        </div>
-
-        <div id="settings-tab" class="tab-content">
-          <div class="setting-item">
-            <span class="setting-label">Background Tracking</span>
-            <label class="switch">
-              <input type="checkbox" id="background-tracking" checked>
-              <span class="slider"></span>
-            </label>
-          </div>
-        </div>
+    <div id="tracking-tab" class="tab-content active">
+      <div id="tracking-status" class="tracking-status">
+        Waiting to start tracking...
+      </div>
+      
+      <div class="file-info">
+        <div id="file-name"></div>
+        <div id="page-name"></div>
+      </div>
+      
+      <div id="timer-display" class="timer-display">
+        0h 0m
+      </div>
+      
+      <div class="button-container">
+        <button id="start-button" class="primary">Start Tracking</button>
+        <button id="stop-button" class="secondary" style="display: none;">Stop</button>
+      </div>
+    </div>
+    
+    <div id="summary-tab" class="tab-content">
+      <div id="summary-content" class="summary-content">
+        <div class="loading">Loading summary...</div>
       </div>
     </div>
   </div>
-
-<script>
+  
+  <script>
+    let activeTab = 'tracking-tab';
     let isTracking = false;
-    let trackingStartTime = 0;
-    let timerInterval;
-
-    // Format duration in seconds to "Xh Ym Zs" format
+    let currentSession = null;
+    let updateTimer = null;
+    
+    // Initialize UI
+    document.addEventListener('DOMContentLoaded', () => {
+      setupTabButtons();
+      setupTrackingButtons();
+      parent.postMessage({ pluginMessage: { type: 'ui-loaded' } }, '*');
+    });
+    
+    // Set up tab navigation
+    function setupTabButtons() {
+      const tabs = document.querySelectorAll('.tab-button');
+      tabs.forEach(tab => {
+        tab.addEventListener('click', () => {
+          const tabId = tab.dataset.tab;
+          activateTab(tabId);
+        });
+      });
+    }
+    
+    function activateTab(tabId) {
+      // Update buttons
+      document.querySelectorAll('.tab-button').forEach(btn => {
+        btn.classList.toggle('active', btn.dataset.tab === tabId);
+      });
+      
+      // Update content
+      document.querySelectorAll('.tab-content').forEach(content => {
+        content.classList.toggle('active', content.id === tabId);
+      });
+      
+      activeTab = tabId;
+      
+      // Update height
+      const activeContent = document.getElementById(tabId);
+      parent.postMessage({ 
+        pluginMessage: { 
+          type: 'resize',
+          height: activeContent.offsetHeight + 100
+        }
+      }, '*');
+    }
+    
+    // Set up tracking buttons
+    function setupTrackingButtons() {
+      const startButton = document.getElementById('start-button');
+      const stopButton = document.getElementById('stop-button');
+      
+      startButton.addEventListener('click', () => {
+        parent.postMessage({ pluginMessage: { type: 'start-tracking' } }, '*');
+      });
+      
+      stopButton.addEventListener('click', () => {
+        parent.postMessage({ pluginMessage: { type: 'stop-tracking' } }, '*');
+      });
+    }
+    
+    // Update tracking status
+    function updateTrackingStatus(tracking, fileName, pageName) {
+      const status = document.getElementById('tracking-status');
+      const fileNameEl = document.getElementById('file-name');
+      const pageNameEl = document.getElementById('page-name');
+      const startButton = document.getElementById('start-button');
+      const stopButton = document.getElementById('stop-button');
+      
+      status.classList.toggle('active', tracking);
+      status.textContent = tracking ? 'Currently tracking time...' : 'Waiting to start tracking...';
+      
+      fileNameEl.textContent = `File: ${fileName || 'None'}`;
+      pageNameEl.textContent = `Page: ${pageName || 'None'}`;
+      
+      startButton.style.display = tracking ? 'none' : 'block';
+      stopButton.style.display = tracking ? 'block' : 'none';
+      
+      isTracking = tracking;
+    }
+    
+    // Update timer display
+    function updateTimerDisplay() {
+      if (!isTracking || !currentSession) return;
+      
+      const now = Date.now();
+      const elapsed = Math.floor((now - currentSession.startTime) / 1000);
+      document.getElementById('timer-display').textContent = formatDuration(elapsed);
+    }
+    
+    // Format duration
     function formatDuration(seconds) {
       const hours = Math.floor(seconds / 3600);
       const minutes = Math.floor((seconds % 3600) / 60);
-      const secs = seconds % 60;
-      return `${hours}h ${minutes}m ${secs}s`;
+      return `${hours}h ${minutes}m`;
     }
-
-    // Truncate string with ellipsis if too long
-    function truncateString(str, maxLength) {
-      if (str.length <= maxLength) return str;
-      return str.substring(0, maxLength - 3) + '...';
-    }
-
-    // Save active tab preference
-    function saveTabPreference(tabId) {
-      figma.clientStorage.setAsync('activeTab', tabId);
-    }
-
-    // Load active tab preference
-    async function loadTabPreference() {
-      try {
-        const savedTab = await figma.clientStorage.getAsync('activeTab');
-        return savedTab || 'tracking-tab';
-      } catch (error) {
-        console.error('Error loading tab preference:', error);
-        return 'tracking-tab';
-      }
-    }
-
-    // Set up tab buttons
-    function setupTabButtons() {
-      const tabs = ['tracking', 'summary', 'settings'];
-      
-      tabs.forEach(tab => {
-        const button = document.getElementById(`${tab}-button`);
-        const content = document.getElementById(`${tab}-tab`);
-        
-        button.onclick = () => {
-          // Remove active class from all buttons and contents
-          tabs.forEach(t => {
-            document.getElementById(`${t}-button`).classList.remove('active');
-            document.getElementById(`${t}-tab`).classList.remove('active');
-          });
-          
-          // Add active class to clicked button and its content
-          button.classList.add('active');
-          content.classList.add('active');
-          
-          // Save preference
-          saveTabPreference(`${tab}-tab`);
-          
-          // If summary tab is selected, load the data
-          if (tab === 'summary') {
-            parent.postMessage({ pluginMessage: { type: 'get-summary' } }, '*');
-          }
-        };
-      });
-      
-      // Load saved preference
-      loadTabPreference().then(savedTab => {
-        const tabName = savedTab.replace('-tab', '');
-        document.getElementById(`${tabName}-button`).click();
-      });
-    }
-
-    // Update timer display
-    function updateTimer() {
-      if (!isTracking) return;
-      
-      const now = Date.now();
-      const elapsed = Math.floor((now - trackingStartTime) / 1000);
-      document.getElementById('timer').textContent = formatDuration(elapsed);
-    }
-
-    // Start tracking
-    function startTracking() {
-      isTracking = true;
-      trackingStartTime = Date.now();
-      
-      document.getElementById('start-button').style.display = 'none';
-      document.getElementById('stop-button').style.display = 'block';
-      
-      timerInterval = setInterval(updateTimer, 1000);
-      parent.postMessage({ pluginMessage: { type: 'start-tracking' } }, '*');
-    }
-
-    // Stop tracking
-    function stopTracking() {
-      isTracking = false;
-      clearInterval(timerInterval);
-      
-      document.getElementById('start-button').style.display = 'block';
-      document.getElementById('stop-button').style.display = 'none';
-      
-      document.getElementById('timer').textContent = '0h 0m';
-      parent.postMessage({ pluginMessage: { type: 'stop-tracking' } }, '*');
-    }
-
+    
     // Update summary display
-    function updateSummaryDisplay(summaryData, recentlyUpdatedPage) {
+    function updateSummaryDisplay(files) {
       const container = document.getElementById('summary-content');
       if (!container) return;
       
       container.innerHTML = '';
       
-      if (!summaryData || Object.keys(summaryData).length === 0) {
-        container.innerHTML = '<div class="file-summary">No tracking data available</div>';
+      if (!files || Object.keys(files).length === 0) {
+        container.innerHTML = '<div class="no-data">No tracking data available</div>';
         return;
       }
-
-      // Calculate today's total time (6 AM to 6 AM)
+      
+      // Calculate today's total
       const now = new Date();
       const todayStart = new Date(now);
       todayStart.setHours(6, 0, 0, 0);
       if (now.getHours() < 6) {
         todayStart.setDate(todayStart.getDate() - 1);
       }
-
+      
       let todayTotal = 0;
       const allPages = [];
-
+      
       // Collect all pages and calculate today's total
-      Object.values(summaryData).forEach(file => {
+      Object.values(files).forEach(file => {
         if (!file.pages) return;
         
         Object.values(file.pages).forEach(page => {
-          if (page && page.lastUpdated && page.totalTime > 0) {
-            if (page.lastUpdated >= todayStart.getTime()) {
-              todayTotal += page.totalTime;
-            }
-            allPages.push(page);
+          if (page.lastUpdated >= todayStart.getTime()) {
+            todayTotal += page.totalTime;
           }
+          allPages.push(page);
         });
       });
-
+      
       // Create today's total header
       const totalHeader = document.createElement('div');
       totalHeader.className = 'today-total';
-      totalHeader.style.fontSize = '16px';
-      totalHeader.style.fontWeight = '500';
-      totalHeader.style.marginBottom = '16px';
-      totalHeader.style.padding = '12px';
-      totalHeader.style.backgroundColor = '#f0f7ff';
-      totalHeader.style.borderRadius = '6px';
-      totalHeader.style.color = '#18A0FB';
       totalHeader.textContent = `Today Total: ${formatDuration(Math.floor(todayTotal / 1000))}`;
       container.appendChild(totalHeader);
-
-      // Sort all pages by total time
+      
+      // Sort pages by total time
       const sortedPages = allPages
+        .filter(page => page.totalTime > 0)
         .sort((a, b) => b.totalTime - a.totalTime);
-
+      
       // Create pages list
-      const pagesContainer = document.createElement('div');
-      pagesContainer.className = 'pages-list';
-      pagesContainer.style.display = 'flex';
-      pagesContainer.style.flexDirection = 'column';
-      pagesContainer.style.gap = '8px';
-
       sortedPages.forEach(page => {
         const pageElement = document.createElement('div');
         pageElement.className = 'page-summary';
-        pageElement.style.display = 'flex';
-        pageElement.style.justifyContent = 'space-between';
-        pageElement.style.alignItems = 'center';
-        pageElement.style.padding = '8px 12px';
-        pageElement.style.backgroundColor = '#f5f5f5';
-        pageElement.style.borderRadius = '4px';
-        pageElement.style.fontSize = '14px';
-        pageElement.style.transition = 'all 0.3s ease';
-
+        
+        if (page.lastUpdated >= todayStart.getTime()) {
+          pageElement.classList.add('today');
+        }
+        
         const pageName = document.createElement('div');
-        pageName.style.flex = '1';
-        pageName.style.fontWeight = '500';
-        pageName.textContent = truncateString(page.name, 25);
-
+        pageName.textContent = page.name;
+        
         const pageTime = document.createElement('div');
-        pageTime.style.marginLeft = '12px';
-        pageTime.style.color = '#666';
         pageTime.textContent = formatDuration(Math.floor(page.totalTime / 1000));
-
-        // Check if this is the recently updated page
-        const isRecentlyUpdated = recentlyUpdatedPage && 
-                                recentlyUpdatedPage.fileId === page.fileId && 
-                                recentlyUpdatedPage.pageId === page.id &&
-                                (now - recentlyUpdatedPage.timestamp) < 300000; // 5 minutes
-
-        if (isRecentlyUpdated) {
-          pageElement.style.backgroundColor = '#E3F2FD';
-          pageElement.style.borderLeft = '3px solid #2196F3';
-          pageTime.style.color = '#2196F3';
-          pageTime.style.fontWeight = '500';
-        }
-        // Add highlight for today's pages
-        else if (page.lastUpdated >= todayStart.getTime()) {
-          pageElement.style.backgroundColor = '#f8f8f8';
-          pageElement.style.borderLeft = '3px solid #18A0FB';
-        }
-
+        
         pageElement.appendChild(pageName);
         pageElement.appendChild(pageTime);
-        pagesContainer.appendChild(pageElement);
+        container.appendChild(pageElement);
       });
-
-      container.appendChild(pagesContainer);
-      container.style.overflowY = 'auto';
     }
-
-    // Set up event listeners
+    
+    // Handle messages from the plugin
     window.onmessage = async (event) => {
       const msg = event.data.pluginMessage;
       
-      if (msg.type === 'tracking-status') {
-        isTracking = msg.isTracking;
+      if (msg.type === 'update') {
+        // Update tracking status
+        updateTrackingStatus(
+          msg.tracking,
+          msg.currentFile ? files[msg.currentFile]?.name : 'None',
+          msg.currentPage ? files[msg.currentFile]?.pages[msg.currentPage]?.name : 'None'
+        );
         
-        if (msg.fileName) {
-          document.getElementById('file-name').textContent = truncateString(msg.fileName, 30);
-        }
-        if (msg.pageName) {
-          document.getElementById('page-name').textContent = truncateString(msg.pageName, 30);
-        }
+        // Update session
+        currentSession = msg.activeSession;
         
-        if (isTracking) {
-          trackingStartTime = msg.startTime;
-          document.getElementById('start-button').style.display = 'none';
-          document.getElementById('stop-button').style.display = 'block';
-          if (!timerInterval) {
-            timerInterval = setInterval(updateTimer, 1000);
+        // Update timer
+        if (msg.tracking && currentSession) {
+          if (!updateTimer) {
+            updateTimer = setInterval(updateTimerDisplay, 1000);
           }
         } else {
-          document.getElementById('start-button').style.display = 'block';
-          document.getElementById('stop-button').style.display = 'none';
-          clearInterval(timerInterval);
-          timerInterval = null;
-          document.getElementById('timer').textContent = '0h 0m';
+          if (updateTimer) {
+            clearInterval(updateTimer);
+            updateTimer = null;
+          }
+          document.getElementById('timer-display').textContent = '0h 0m';
         }
-      }
-      else if (msg.type === 'summary-data') {
-        updateSummaryDisplay(msg.data, msg.recentlyUpdatedPage);
-      }
-      else if (msg.type === 'file-changed') {
-        document.getElementById('file-name').textContent = truncateString(msg.fileName, 30);
-        document.getElementById('page-name').textContent = truncateString(msg.pageName, 30);
         
-        if (msg.resetTimer) {
-          document.getElementById('timer').textContent = '0h 0m';
-        }
+        // Update summary
+        updateSummaryDisplay(msg.files);
       }
     };
-
-    // Initialize UI
-    document.getElementById('start-button').onclick = startTracking;
-    document.getElementById('stop-button').onclick = stopTracking;
-    document.getElementById('background-tracking').onchange = (e) => {
-      parent.postMessage({
-        pluginMessage: {
-          type: 'toggle-background-tracking',
-          enabled: e.target.checked
-        }
-      }, '*');
-    };
-
-    // Set up tabs
-    setupTabButtons();
-
-    // Tell the plugin we're ready
-    parent.postMessage({ pluginMessage: { type: 'ui-loaded' } }, '*');
-
-    // Add minimize functionality
-    let isMinimized = false;
-    const container = document.querySelector('.plugin-container');
-    const header = document.querySelector('.minimize-header');
-    const button = document.getElementById('minimize-button');
-    const icon = document.getElementById('minimize-icon');
-    const statusText = document.getElementById('minimize-status');
-
-    function updateMinimizeStatus() {
-      if (isTracking) {
-        const timeString = formatDuration(Math.floor((Date.now() - trackingStartTime) / 1000));
-        statusText.textContent = `Tracking: ${timeString}`;
-      } else {
-        statusText.textContent = 'Not tracking';
-      }
-    }
-
-    function toggleMinimize() {
-      isMinimized = !isMinimized;
-      container.classList.toggle('minimized');
-      header.classList.toggle('minimized');
-      
-      // Update icon
-      if (isMinimized) {
-        icon.setAttribute('d', 'M2 8H14');
-      } else {
-        icon.setAttribute('d', 'M2 8H14M8 2V14');
-      }
-      
-      // Notify plugin about height change
-      parent.postMessage({ pluginMessage: { 
-        type: 'resize', 
-        height: isMinimized ? 40 : 400 
-      }}, '*');
-    }
-
-    button.addEventListener('click', toggleMinimize);
-
-    // Update status text periodically when minimized
-    setInterval(() => {
-      if (isMinimized) {
-        updateMinimizeStatus();
-      }
-    }, 1000);
-
-    // Update status when tracking starts/stops
-    function onTrackingStateChange() {
-      if (isMinimized) {
-        updateMinimizeStatus();
-      }
-    }
-</script>
+  </script>
 </body>
 </html>
 
