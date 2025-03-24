@@ -138,7 +138,7 @@ function startTracking() {
   if (isTracking) return;
   
   isTracking = true;
-  console.log('Started tracking for file:', activeFileId, 'page:', activePage);
+  console.log('Started tracking for file:', activeFileId);
   
   // Create new file entry if it doesn't exist
   if (!files[activeFileId]) {
@@ -149,17 +149,20 @@ function startTracking() {
       totalTime: 0,
       lastUpdated: Date.now()
     };
+    console.log('Created new file entry:', activeFileName);
   }
   
   // Create new page entry if it doesn't exist
-  if (!files[activeFileId].pages[activePage]) {
-    files[activeFileId].pages[activePage] = {
+  const pageKey = `${activeFileId}_${activePage}`;
+  if (!files[activeFileId].pages[pageKey]) {
+    files[activeFileId].pages[pageKey] = {
       id: activePage,
       name: activePageName,
       totalTime: 0,
       fileId: activeFileId,
       lastUpdated: Date.now()
     };
+    console.log('Created new page entry:', activePageName);
   }
   
   trackingStartTime = Date.now();
@@ -175,16 +178,15 @@ async function stopTracking() {
   const endTime = Date.now();
   const duration = endTime - trackingStartTime;
   
+  // Update tracking data
   if (activeFileId && files[activeFileId]) {
     const file = files[activeFileId];
-    
-    // Update file total time
     file.totalTime = (file.totalTime || 0) + duration;
     file.lastUpdated = Date.now();
     
-    // Update page total time
-    if (activePage && file.pages[activePage]) {
-      const page = file.pages[activePage];
+    const pageKey = `${activeFileId}_${activePage}`;
+    if (activePage && file.pages && file.pages[pageKey]) {
+      const page = file.pages[pageKey];
       page.totalTime = (page.totalTime || 0) + duration;
       page.lastUpdated = Date.now();
     }
@@ -195,7 +197,8 @@ async function stopTracking() {
     // Send updated summary to UI
     figma.ui.postMessage({
       type: 'summary-data',
-      data: files
+      data: files,
+      currentFileId: activeFileId
     });
   }
   
@@ -205,7 +208,7 @@ async function stopTracking() {
     isTracking: false 
   });
   
-  console.log('Stopped tracking. Updated file:', activeFileId, 'page:', activePage);
+  console.log('Stopped tracking. Updated file:', activeFileName);
 }
 
 // Update UI with current tracking status
@@ -240,9 +243,8 @@ function checkCurrentFile() {
 
 // Handle file or page change
 async function handleFileChange(newFileId, newPageId, newFileName, newPageName) {
-  console.log(`File/page changed: ${activeFileId}:${activePage} -> ${newFileId}:${newPageId}`);
+  console.log(`File/page changed: ${activeFileId}/${activePage} -> ${newFileId}/${newPageId}`);
   
-  // Stop tracking in the current file/page before switching
   if (isTracking) {
     await stopTracking();
   }
@@ -252,7 +254,7 @@ async function handleFileChange(newFileId, newPageId, newFileName, newPageName) 
   activeFileName = newFileName;
   activePageName = newPageName;
   
-  // Create a new file entry if it doesn't exist
+  // Ensure file exists in storage
   if (!files[activeFileId]) {
     files[activeFileId] = {
       id: activeFileId,
@@ -261,20 +263,23 @@ async function handleFileChange(newFileId, newPageId, newFileName, newPageName) 
       totalTime: 0,
       lastUpdated: Date.now()
     };
+    console.log('Created new file entry on change:', activeFileName);
   }
   
-  // Create a new page entry if it doesn't exist
-  if (!files[activeFileId].pages[activePage]) {
-    files[activeFileId].pages[activePage] = {
+  // Ensure page exists in file with unique key
+  const pageKey = `${activeFileId}_${activePage}`;
+  if (!files[activeFileId].pages[pageKey]) {
+    files[activeFileId].pages[pageKey] = {
       id: activePage,
       name: activePageName,
       totalTime: 0,
       fileId: activeFileId,
       lastUpdated: Date.now()
     };
+    console.log('Created new page entry on change:', activePageName);
   }
   
-  // Save the updated data structure
+  // Save the new entries
   await saveSummaryToClientStorage(files);
   
   // Update UI with file change
@@ -290,7 +295,8 @@ async function handleFileChange(newFileId, newPageId, newFileName, newPageName) 
   // Send updated summary data
   figma.ui.postMessage({
     type: 'summary-data',
-    data: files
+    data: files,
+    currentFileId: activeFileId
   });
   
   if (backgroundTracking || isUiVisible) {
