@@ -203,201 +203,80 @@
       transform: translateX(20px);
     }
 
-    .minimize-button {
-      position: absolute;
-      top: 12px;
-      right: 12px;
-      background: none;
-      border: none;
-      cursor: pointer;
-      padding: 4px;
-      border-radius: 4px;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-    }
-    
-    .minimize-button:hover {
-      background-color: #f0f0f0;
-    }
-    
-    .minimize-button svg {
-      width: 16px;
-      height: 16px;
-    }
-    
     .plugin-container {
       transition: all 0.3s ease;
-      position: relative;
+      height: 400px;
     }
     
     .plugin-container.minimized {
-      height: 40px !important;
+      height: 40px;
       overflow: hidden;
     }
     
-    .minimized-view {
-      display: none;
-      position: absolute;
-      top: 0;
-      left: 0;
-      right: 0;
-      height: 40px;
+    .minimize-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 8px 12px;
       background-color: #fff;
       border-bottom: 1px solid #e5e5e5;
-      padding: 0 12px;
-      align-items: center;
-      justify-content: space-between;
+      height: 40px;
+      box-sizing: border-box;
     }
     
-    .minimized-view.visible {
-      display: flex;
+    .minimize-header.minimized {
+      border-bottom: none;
     }
     
-    .minimized-info {
+    .minimize-title {
+      font-weight: 500;
+      font-size: 14px;
+      color: #333;
       display: flex;
       align-items: center;
       gap: 8px;
-      font-size: 13px;
     }
     
-    .minimized-page {
-      color: #666;
-      max-width: 150px;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-    }
-    
-    .minimized-time {
-      font-weight: 500;
-      color: #18A0FB;
-    }
-
-    .top-bar {
-      position: absolute;
-      top: 0;
-      left: 0;
-      right: 0;
-      height: 40px;
-      background-color: #fff;
-      border-bottom: 1px solid #e5e5e5;
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      padding: 0 12px;
-      z-index: 100;
-    }
-
-    .logo {
-      font-weight: 600;
-      font-size: 16px;
-      color: #18A0FB;
-      letter-spacing: 0.5px;
-    }
-
     .minimize-button {
       background: none;
       border: none;
       cursor: pointer;
       padding: 4px;
-      border-radius: 4px;
+      color: #666;
       display: flex;
       align-items: center;
       justify-content: center;
-      opacity: 0.6;
-      transition: opacity 0.2s;
+      width: 24px;
+      height: 24px;
+      border-radius: 4px;
     }
-
+    
     .minimize-button:hover {
-      opacity: 1;
-      background-color: #f0f0f0;
+      background-color: #f5f5f5;
     }
-
-    .container {
-      margin-top: 40px; /* Add space for top bar */
-    }
-
-    /* Updated minimized view styles */
-    .minimized-view {
-      display: none;
-      position: absolute;
-      top: 0;
-      left: 0;
-      right: 0;
-      height: 32px;
-      background-color: #fff;
-      padding: 0 12px;
-      align-items: center;
-      justify-content: space-between;
-      border: 1px solid #e5e5e5;
-      border-radius: 6px;
-    }
-
-    .minimized-info {
-      display: flex;
-      align-items: center;
-      gap: 12px;
+    
+    .minimize-status {
       font-size: 13px;
-    }
-
-    .status-dot {
-      width: 8px;
-      height: 8px;
-      border-radius: 50%;
-      background-color: #4CAF50;
-      animation: blink 2s infinite;
-    }
-
-    @keyframes blink {
-      0% { opacity: 1; }
-      50% { opacity: 0.4; }
-      100% { opacity: 1; }
-    }
-
-    .minimized-page {
-      color: #333;
-      font-weight: 500;
-      max-width: 200px;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-    }
-
-    .plugin-container.minimized {
-      height: 32px !important;
-      overflow: hidden;
-      border-radius: 6px;
-      border: none;
+      color: #666;
+      margin-left: 8px;
     }
   </style>
 </head>
 <body>
   <div class="plugin-container">
-    <!-- Top bar for full view -->
-    <div class="top-bar">
-      <div class="logo">HOURS</div>
-      <button class="minimize-button" onclick="toggleMinimize()" title="Minimize">
-        <svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
-          <path d="M14 7H2V9H14V7Z" fill="#666"/>
-        </svg>
-      </button>
-    </div>
-
-    <!-- Minimized view -->
-    <div class="minimized-view">
-      <div class="minimized-info">
-        <div class="status-dot"></div>
-        <span class="minimized-page" id="minimized-page">No active page</span>
+    <div class="minimize-header">
+      <div class="minimize-title">
+        <span>Hours 3</span>
+        <span class="minimize-status" id="minimize-status"></span>
       </div>
-      <button class="minimize-button" onclick="toggleMinimize()" title="Maximize">
-        <svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
-          <path d="M14 7H9V2H7V7H2V9H7V14H9V9H14V7Z" fill="#666"/>
+      <button class="minimize-button" id="minimize-button" title="Minimize/Maximize">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+          <path d="M2 8H14M8 2V14" stroke="currentColor" stroke-width="2" stroke-linecap="round" id="minimize-icon"/>
         </svg>
       </button>
     </div>
-
-    <div class="main-content">
+    
+    <div id="main-content">
       <div class="container">
         <div class="tab-navigation">
           <button id="tracking-button" class="tab-button active">Tracking</button>
@@ -439,11 +318,10 @@
     </div>
   </div>
 
-  <script>
+<script>
     let isTracking = false;
     let trackingStartTime = 0;
     let timerInterval;
-    let isMinimized = false;
 
     // Format duration in seconds to "Xh Ym Zs" format
     function formatDuration(seconds) {
@@ -701,62 +579,58 @@
     // Tell the plugin we're ready
     parent.postMessage({ pluginMessage: { type: 'ui-loaded' } }, '*');
 
-    function toggleMinimize() {
-      const container = document.querySelector('.plugin-container');
-      const minimizedView = document.querySelector('.minimized-view');
-      const mainContent = document.querySelector('.main-content');
-      const topBar = document.querySelector('.top-bar');
-      
-      isMinimized = !isMinimized;
-      
-      if (isMinimized) {
-        container.classList.add('minimized');
-        minimizedView.classList.add('visible');
-        mainContent.style.display = 'none';
-        topBar.style.display = 'none';
-        
-        // Update minimized view with current page
-        const pageName = document.getElementById('page-name').textContent;
-        document.getElementById('minimized-page').textContent = pageName;
-        
-        // Notify the plugin code about the size change
-        parent.postMessage({ pluginMessage: { type: 'resize', height: 32 } }, '*');
+    // Add minimize functionality
+    let isMinimized = false;
+    const container = document.querySelector('.plugin-container');
+    const header = document.querySelector('.minimize-header');
+    const button = document.getElementById('minimize-button');
+    const icon = document.getElementById('minimize-icon');
+    const statusText = document.getElementById('minimize-status');
+
+    function updateMinimizeStatus() {
+      if (isTracking) {
+        const timeString = formatDuration(Math.floor((Date.now() - trackingStartTime) / 1000));
+        statusText.textContent = `Tracking: ${timeString}`;
       } else {
-        container.classList.remove('minimized');
-        minimizedView.classList.remove('visible');
-        mainContent.style.display = 'block';
-        topBar.style.display = 'flex';
-        
-        // Restore original size
-        parent.postMessage({ pluginMessage: { type: 'resize', height: 400 } }, '*');
+        statusText.textContent = 'Not tracking';
       }
     }
 
-    // Update minimized view info
-    function updateMinimizedView(pageName, time) {
-      const minimizedPage = document.getElementById('minimized-page');
-      const minimizedTime = document.getElementById('minimized-time');
+    function toggleMinimize() {
+      isMinimized = !isMinimized;
+      container.classList.toggle('minimized');
+      header.classList.toggle('minimized');
       
-      if (minimizedPage && minimizedTime) {
-        minimizedPage.textContent = pageName || 'No active page';
-        minimizedTime.textContent = time || '0h 0m 0s';
+      // Update icon
+      if (isMinimized) {
+        icon.setAttribute('d', 'M2 8H14');
+      } else {
+        icon.setAttribute('d', 'M2 8H14M8 2V14');
       }
+      
+      // Notify plugin about height change
+      parent.postMessage({ pluginMessage: { 
+        type: 'resize', 
+        height: isMinimized ? 40 : 400 
+      }}, '*');
     }
 
-    // Modify your existing timer update function to also update minimized view
-    function updateTimer(seconds) {
-      const timerDisplay = document.getElementById('timer');
-      const formattedTime = formatDuration(seconds);
-      
-      if (timerDisplay) {
-        timerDisplay.textContent = formattedTime;
+    button.addEventListener('click', toggleMinimize);
+
+    // Update status text periodically when minimized
+    setInterval(() => {
+      if (isMinimized) {
+        updateMinimizeStatus();
       }
-      
-      // Update minimized view
-      const pageName = document.getElementById('page-name').textContent;
-      document.getElementById('minimized-page').textContent = pageName;
+    }, 1000);
+
+    // Update status when tracking starts/stops
+    function onTrackingStateChange() {
+      if (isMinimized) {
+        updateMinimizeStatus();
+      }
     }
-  </script>
+</script>
 </body>
 </html>
 
