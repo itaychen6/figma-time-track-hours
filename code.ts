@@ -18,7 +18,7 @@ const AUTO_START_THRESHOLD = 2000; // Time in ms to detect sustained activity be
 const RECENT_UPDATE_THRESHOLD = 300000; // 5 minutes in milliseconds
 
 // Storage keys
-const SUMMARY_STORAGE_KEY = 'timeTrackingSummary';
+const SUMMARY_STORAGE_KEY = 'trackingData';
 const LAST_UPDATE_KEY = 'lastSummaryUpdate';
 const BACKGROUND_TRACKING_KEY = 'backgroundTracking';
 
@@ -213,11 +213,11 @@ figma.ui.onmessage = async (message: any) => {
 async function initializePlugin() {
   console.log('Initializing plugin');
   
-  // Check for daily reset first
-  await checkAndPerformDailyReset();
-  
-  // Load summary first
+  // First load the existing data
   await loadSummaryFromClientStorage();
+  
+  // Then check for daily reset
+  await checkAndPerformDailyReset();
   
   // Set up current file and page
   const currentFileId = figma.currentPage.parent.id;
@@ -227,7 +227,7 @@ async function initializePlugin() {
   activeFileName = currentFileName;
   activePageName = figma.currentPage.name;
   
-  // Initialize file structure if needed
+  // Initialize file structure if needed - preserve existing data
   if (!files[activeFileId]) {
     files[activeFileId] = {
       id: activeFileId,
@@ -258,6 +258,9 @@ async function initializePlugin() {
       currentFileId: activeFileId
     });
   }
+  
+  // Save the initialized data to ensure it's stored
+  await saveData();
 }
 
 // Handle user activity
@@ -567,21 +570,35 @@ async function saveData() {
 // Client storage functions
 async function saveSummaryToClientStorage(summaryData: any) {
   try {
-    await figma.clientStorage.setAsync(SUMMARY_STORAGE_KEY, summaryData);
+    console.log('Saving summary to client storage with key:', 'trackingData');
+    // Save with consistent key
+    await figma.clientStorage.setAsync('trackingData', summaryData);
+    await figma.clientStorage.setAsync(SUMMARY_STORAGE_KEY, summaryData); // Also save to the other key to be sure
     await figma.clientStorage.setAsync(LAST_UPDATE_KEY, Date.now());
-    console.log('Summary saved to client storage');
+    console.log('Summary saved to client storage, file count:', Object.keys(summaryData).length);
   } catch (error) {
     console.error('Error saving to client storage:', error);
+    figma.notify('Error saving data. Your tracking may not persist after closing.', { error: true });
   }
 }
 
 async function loadSummaryFromClientStorage() {
   try {
-    const summaryData = await figma.clientStorage.getAsync(SUMMARY_STORAGE_KEY);
-    const lastUpdate = await figma.clientStorage.getAsync(LAST_UPDATE_KEY);
-    console.log('Summary loaded from client storage, last updated:', new Date(lastUpdate));
+    console.log('Loading summary from client storage...');
+    // Try to load with the correct key
+    let summaryData = await figma.clientStorage.getAsync('trackingData');
     
-    if (summaryData) {
+    // If not found, try the other key as fallback
+    if (!summaryData) {
+      console.log('No data found with primary key, trying fallback key...');
+      summaryData = await figma.clientStorage.getAsync(SUMMARY_STORAGE_KEY);
+    }
+    
+    const lastUpdate = await figma.clientStorage.getAsync(LAST_UPDATE_KEY);
+    console.log('Summary loaded from client storage, last updated:', new Date(lastUpdate || Date.now()));
+    
+    if (summaryData && Object.keys(summaryData).length > 0) {
+      console.log('Found existing tracking data with file count:', Object.keys(summaryData).length);
       files = summaryData;
       
       // Clean up and validate the data
@@ -616,11 +633,15 @@ async function loadSummaryFromClientStorage() {
           currentFileId: activeFileId
         });
       }
+    } else {
+      console.log('No existing tracking data found, initializing empty dataset');
+      files = {};
     }
     return files;
   } catch (error) {
     console.error('Error loading from client storage:', error);
-    return {};
+    files = {};
+    return files;
   }
 }
 
