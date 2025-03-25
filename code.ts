@@ -26,6 +26,9 @@ const BACKGROUND_TRACKING_KEY = 'backgroundTracking';
 const LAST_RESET_KEY = 'lastResetTime';
 const RESET_HOUR = 6; // 6 AM
 
+// Add or update these constants at the top of the file
+const INACTIVITY_TIMEOUT = 10000; // 10 seconds inactivity timeout
+
 // Add type definitions at the top of the file
 interface PageData {
   id: string;
@@ -103,11 +106,15 @@ figma.on('run', () => {
 figma.loadAllPagesAsync().then(() => {
   // Register event handlers
   figma.on('selectionchange', () => {
-    handleActivity();
+    handleUserActivity();
   });
   
   figma.on('documentchange', () => {
-    handleActivity();
+    handleUserActivity();
+  });
+  
+  figma.on('currentpagechange', () => {
+    handleUserActivity();
   });
   
   console.log('All pages loaded, event handlers registered');
@@ -121,7 +128,7 @@ figma.loadAllPagesAsync().then(() => {
 
 // Add this after other event listeners in the plugin initialization
 figma.on('documentchange', (event) => {
-  handleActivity();
+  handleUserActivity();
   
   // Check if any page names have changed
   if (files[activeFileId]) {
@@ -150,6 +157,8 @@ figma.on('documentchange', (event) => {
 
 // Handle messages from the UI
 figma.ui.onmessage = async (message: any) => {
+  handleUserActivity();
+  
   const pluginMessage = message as {type: string, [key: string]: any};
   console.log('Message received from UI:', pluginMessage.type);
 
@@ -181,7 +190,7 @@ figma.ui.onmessage = async (message: any) => {
   }
   else if (pluginMessage.type === 'start-tracking') {
     console.log('Start tracking requested from UI');
-    handleActivity();
+    handleUserActivity();
   }
   else if (pluginMessage.type === 'get-summary') {
     // Reload data before sending
@@ -252,7 +261,7 @@ async function initializePlugin() {
 }
 
 // Handle user activity
-function handleActivity() {
+function handleUserActivity() {
   lastActivityTime = Date.now();
   
   if (!isTracking) {
@@ -386,6 +395,8 @@ function checkCurrentFile() {
 
 // Handle file or page change
 async function handleFileChange(newFileId: string, newPageId: string, newFileName: string, newPageName: string) {
+  handleUserActivity();
+  
   console.log('File change detected:', { newFileId, newPageId, newFileName, newPageName });
   
   const fileChanged = newFileId !== activeFileId;
@@ -468,19 +479,23 @@ async function handleFileChange(newFileId: string, newPageId: string, newFileNam
 function checkActivity() {
   const now = Date.now();
   
-  // Only stop tracking if user is truly inactive and UI is visible
-  if (isTracking && isUiVisible && (now - lastActivityTime > INACTIVE_THRESHOLD)) {
-    const hadRecentChanges = checkForRecentChanges();
-    
-    if (!hadRecentChanges) {
-      console.log('User inactive, stopping tracking');
-      stopTracking();
-    }
+  // Check if tracking is active and user has been inactive
+  if (isTracking && (now - lastActivityTime > INACTIVITY_TIMEOUT)) {
+    console.log('Auto-stopping tracking due to inactivity');
+    stopTracking();
+    figma.notify('Tracking stopped due to inactivity', { timeout: 2000 });
+    return;
+  }
+  
+  // Only check for auto-start if not already tracking and background tracking is enabled
+  if (!isTracking && backgroundTracking) {
+    checkBackgroundActivity();
   }
 }
 
 // Add function to check for recent document changes
 function checkForRecentChanges(): boolean {
+  handleUserActivity();
   const now = Date.now();
   let hasActivity = false;
 
@@ -618,64 +633,27 @@ function formatDuration(seconds: number): string {
 
 // Add background activity checking
 function checkBackgroundActivity() {
-  const now = Date.now();
-  
-  try {
-    // Get current file and page info
-    const currentFileId = figma.currentPage.parent.id;
-    const currentPageId = figma.currentPage.id;
-    const currentFileName = (figma.currentPage.parent as DocumentNode).name;
-    const currentPageName = figma.currentPage.name;
-    
-    // Check if file or page changed
-    if (currentFileId !== activeFileId || currentPageId !== activePage.id) {
-      handleFileChange(currentFileId, currentPageId, currentFileName, currentPageName);
-    }
-    
-    // Enhanced activity detection
-    const hasSelection = figma.currentPage.selection.length > 0;
-    const viewportChanged = figma.viewport.zoom !== figma.viewport.zoom;
+  if (!isTracking) {
+    const now = Date.now();
     const hasRecentChanges = checkForRecentChanges();
-    
-    if (hasSelection || viewportChanged || hasRecentChanges) {
-      lastActivityTime = now;
-      
-      // Handle auto-start tracking with immediate feedback
-      if (!isTracking && backgroundTracking) {
-        if (!sustainedActivityStart) {
-          sustainedActivityStart = now;
-        } else if (now - sustainedActivityStart >= AUTO_START_THRESHOLD) {
-          showBackgroundNotification('Activity detected, starting time tracking...', 3000);
-          startTracking();
-          sustainedActivityStart = 0;
-          
-          // Force an immediate time update
-          updateCurrentSessionTime();
-          saveData();
-        }
+
+    if (hasRecentChanges) {
+      if (!sustainedActivityStart) {
+        sustainedActivityStart = now;
+      } else if (now - sustainedActivityStart >= AUTO_START_THRESHOLD) {
+        // Auto-start tracking
+        startTracking();
+        figma.notify('Auto-started tracking due to activity', { timeout: 2000 });
+        
+        // Force immediate time update - use the trackingStartTime variable
+        updateCurrentSessionTime();
       }
     } else {
-      sustainedActivityStart = 0;
+      sustainedActivityStart = null;
     }
-    
-    // Update and save time more frequently in background
-    if (isTracking) {
-      updateCurrentSessionTime();
-      
-      // Show periodic notifications with more details
-      if (!isUiVisible && (now - lastNotificationTime > NOTIFICATION_INTERVAL)) {
-        const timeTracked = formatDuration(Math.floor((now - trackingStartTime) / 1000));
-        const totalPageTime = formatDuration(Math.floor((files[activeFileId]?.pages[activePage.id]?.totalTime || 0) / 1000));
-        showBackgroundNotification(
-          `Still tracking time on "${activePageName}"\nCurrent session: ${timeTracked}\nTotal page time: ${totalPageTime}`, 
-          5000
-        );
-        lastNotificationTime = now;
-        saveData();
-      }
-    }
-  } catch (error) {
-    console.error('Error in background activity check:', error);
+  } else {
+    // If tracking is active, update time
+    updateCurrentSessionTime();
   }
 }
 
