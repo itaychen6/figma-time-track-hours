@@ -115,6 +115,35 @@ figma.loadAllPagesAsync().then(() => {
   setTimeout(initializePlugin, 100);
 });
 
+// Add this after other event listeners in the plugin initialization
+figma.on('documentchange', (event) => {
+  handleActivity();
+  
+  // Check if any page names have changed
+  if (files[activeFileId]) {
+    Object.keys(files[activeFileId].pages).forEach(pageId => {
+      const page = figma.root.findOne(node => node.id === pageId) as PageNode;
+      if (page && files[activeFileId].pages[pageId].name !== page.name) {
+        // Update the page name in our tracking data
+        files[activeFileId].pages[pageId].name = page.name;
+        console.log('Updated page name:', pageId, page.name);
+        
+        // Save the changes
+        saveData();
+        
+        // Notify UI of the name change
+        if (isUiVisible) {
+          figma.ui.postMessage({
+            type: 'summary-data',
+            data: files,
+            currentFileId: activeFileId
+          });
+        }
+      }
+    });
+  }
+});
+
 // Handle messages from the UI
 figma.ui.onmessage = async (message: any) => {
   const pluginMessage = message as {type: string, [key: string]: any};
@@ -130,7 +159,7 @@ figma.ui.onmessage = async (message: any) => {
     await loadSummaryFromClientStorage();
     updateTrackingStatus();
     
-    // Send summary data with current context
+    // Send summary data with temporary highlight for last tracked page
     figma.ui.postMessage({
       type: 'summary-data',
       data: files,
@@ -139,7 +168,7 @@ figma.ui.onmessage = async (message: any) => {
         fileId: activeFileId,
         pageId: activePage?.id,
         timestamp: Date.now()
-      } : null
+      } : findLastTrackedPage() // Add highlight for last tracked page even if not currently tracking
     });
   }
   else if (pluginMessage.type === 'stop-tracking') {
@@ -676,4 +705,26 @@ function updateCurrentSessionTime() {
       }
     });
   }
+}
+
+// Add helper function to find the last tracked page
+function findLastTrackedPage() {
+  let lastUpdated = 0;
+  let lastPage = null;
+  
+  Object.keys(files).forEach(fileId => {
+    Object.keys(files[fileId].pages).forEach(pageId => {
+      const page = files[fileId].pages[pageId];
+      if (page.lastUpdated > lastUpdated) {
+        lastUpdated = page.lastUpdated;
+        lastPage = {
+          fileId: fileId,
+          pageId: pageId,
+          timestamp: page.lastUpdated
+        };
+      }
+    });
+  });
+  
+  return lastPage;
 }

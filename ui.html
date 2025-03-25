@@ -508,14 +508,28 @@
         // Check if this is the recently updated page
         const isRecentlyUpdated = recentlyUpdatedPage && 
                                 recentlyUpdatedPage.fileId === page.fileId && 
-                                recentlyUpdatedPage.pageId === page.id &&
-                                (now - recentlyUpdatedPage.timestamp) < 300000; // 5 minutes
+                                recentlyUpdatedPage.pageId === page.id;
 
         if (isRecentlyUpdated) {
+          // Apply highlight
           pageElement.style.backgroundColor = '#E3F2FD';
           pageElement.style.borderLeft = '3px solid #2196F3';
           pageTime.style.color = '#2196F3';
           pageTime.style.fontWeight = '500';
+          
+          // Remove highlight after 2 seconds
+          setTimeout(() => {
+            pageElement.style.backgroundColor = '#f5f5f5';
+            pageElement.style.borderLeft = '';
+            pageTime.style.color = '#666';
+            pageTime.style.fontWeight = '400';
+            
+            // Add highlight for today's pages after removing temporary highlight
+            if (page.lastUpdated >= todayStart.getTime()) {
+              pageElement.style.backgroundColor = '#f8f8f8';
+              pageElement.style.borderLeft = '3px solid #18A0FB';
+            }
+          }, 2000);
         }
         // Add highlight for today's pages
         else if (page.lastUpdated >= todayStart.getTime()) {
