@@ -260,6 +260,23 @@
       color: #666;
       margin-left: 8px;
     }
+
+    /* Add styles for reset button */
+    .reset-button {
+      background: #f44336;
+      color: white;
+      border: none;
+      padding: 4px 12px;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 13px;
+      font-weight: 500;
+      transition: background-color 0.2s;
+    }
+
+    .reset-button:hover {
+      background: #d32f2f;
+    }
   </style>
 </head>
 <body>
@@ -301,6 +318,9 @@
         <div id="summary-tab" class="tab-content">
           <div class="summary-header">
             <h3 style="margin: 0;">Time Summary</h3>
+            <button id="reset-button" class="reset-button" title="Reset tracking data">
+              Reset
+            </button>
           </div>
           <div class="summary-content" id="summary-content"></div>
         </div>
@@ -657,6 +677,13 @@
         updateMinimizeStatus();
       }
     }
+
+    // Add reset button handler
+    document.getElementById('reset-button').onclick = () => {
+      if (confirm('Are you sure you want to reset all tracking data? This cannot be undone.')) {
+        parent.postMessage({ pluginMessage: { type: 'reset-tracking' } }, '*');
+      }
+    };
 </script>
 </body>
 </html>

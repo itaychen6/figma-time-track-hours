@@ -22,6 +22,10 @@ const SUMMARY_STORAGE_KEY = 'timeTrackingSummary';
 const LAST_UPDATE_KEY = 'lastSummaryUpdate';
 const BACKGROUND_TRACKING_KEY = 'backgroundTracking';
 
+// Add new constants
+const LAST_RESET_KEY = 'lastResetTime';
+const RESET_HOUR = 6; // 6 AM
+
 // Add type definitions at the top of the file
 interface PageData {
   id: string;
@@ -188,11 +192,20 @@ figma.ui.onmessage = async (message: any) => {
       currentFileId: activeFileId
     });
   }
+  else if (pluginMessage.type === 'reset-tracking') {
+    if (isTracking) {
+      await stopTracking();
+    }
+    await resetTrackingData();
+  }
 };
 
 // Initialize plugin
 async function initializePlugin() {
   console.log('Initializing plugin');
+  
+  // Check for daily reset first
+  await checkAndPerformDailyReset();
   
   // Load summary first
   await loadSummaryFromClientStorage();
@@ -727,4 +740,70 @@ function findLastTrackedPage() {
   });
   
   return lastPage;
+}
+
+// Add function to check and perform daily reset
+async function checkAndPerformDailyReset() {
+  try {
+    const now = new Date();
+    const lastReset = await figma.clientStorage.getAsync(LAST_RESET_KEY) || 0;
+    const lastResetDate = new Date(lastReset);
+    
+    // Check if we need to reset (it's past 6 AM and we haven't reset today)
+    if (now.getHours() >= RESET_HOUR && 
+        (lastResetDate.getDate() !== now.getDate() || 
+         lastResetDate.getMonth() !== now.getMonth() || 
+         lastResetDate.getFullYear() !== now.getFullYear())) {
+      
+      await resetTrackingData();
+      await figma.clientStorage.setAsync(LAST_RESET_KEY, now.getTime());
+      console.log('Performed daily reset at 6 AM');
+    }
+  } catch (error) {
+    console.error('Error performing daily reset:', error);
+  }
+}
+
+// Add function to reset tracking data
+async function resetTrackingData() {
+  // Save previous day's data with timestamp
+  const previousData = { ...files };
+  const timestamp = Date.now();
+  await figma.clientStorage.setAsync(`tracking_history_${timestamp}`, previousData);
+  
+  // Reset current tracking data
+  files = {};
+  if (activeFileId) {
+    // Keep structure for current file but reset times
+    files[activeFileId] = {
+      id: activeFileId,
+      name: activeFileName,
+      pages: {},
+      totalTime: 0,
+      lastUpdated: Date.now()
+    };
+    
+    if (activePage) {
+      files[activeFileId].pages[activePage.id] = {
+        id: activePage.id,
+        name: activePage.name,
+        totalTime: 0,
+        fileId: activeFileId,
+        lastUpdated: Date.now()
+      };
+    }
+  }
+  
+  // Save reset data
+  await saveSummaryToClientStorage(files);
+  
+  // Notify UI
+  if (isUiVisible) {
+    figma.ui.postMessage({
+      type: 'summary-data',
+      data: files,
+      currentFileId: activeFileId
+    });
+    figma.notify('Tracking data has been reset', { timeout: 2000 });
+  }
 }
